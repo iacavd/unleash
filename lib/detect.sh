@@ -132,12 +132,19 @@ _detect_mount_point() {
 _detect_is_locked() {
 	local info
 	info=$(_detect_du info "$1" 2>/dev/null || true)
-	printf '%s\n' "$info" | grep -qiE 'Locked:[[:space:]]*Yes' && return 0
-	printf '%s\n' "$info" | grep -qiE 'FileVault:[[:space:]]*Yes[[:space:]]*\(Locked\)' && return 0
+	printf '%s\n' "$info" | grep -qiE '^[[:space:]]*Locked:[[:space:]]*Yes' && return 0
+	printf '%s\n' "$info" | grep -qiE '^[[:space:]]*FileVault:[[:space:]]*Yes[[:space:]]*\(Locked\)' && return 0
 	return 1
 }
 
-# Never put the passphrase on argv.
+# Personal recovery key is a passphrase; -recoverykeyfile is not a diskutil flag.
+# Never put the secret on argv. Unlock chatter goes to stderr, not resolver stdout.
+_detect_unlock_stdin() {
+	local dev="$1" file="$2"
+	chmod 600 "$file" 2>/dev/null || true
+	_detect_du apfs unlockVolume "$dev" -stdinpassphrase < "$file" >/dev/null
+}
+
 _detect_unlock() {
 	local dev="$1"
 	if [ -n "${UNLEASH_FV_PASSWORD_FILE:-}" ]; then
@@ -145,8 +152,7 @@ _detect_unlock() {
 			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault password file not found"
 			return 1
 		fi
-		chmod 600 "$UNLEASH_FV_PASSWORD_FILE" 2>/dev/null || true
-		if ! _detect_du apfs unlockVolume "$dev" -stdinpassphrase < "$UNLEASH_FV_PASSWORD_FILE"; then
+		if ! _detect_unlock_stdin "$dev" "$UNLEASH_FV_PASSWORD_FILE"; then
 			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
 			return 1
 		fi
@@ -157,8 +163,7 @@ _detect_unlock() {
 			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault recovery key file not found"
 			return 1
 		fi
-		chmod 600 "$UNLEASH_FV_KEY_FILE" 2>/dev/null || true
-		if ! _detect_du apfs unlockVolume "$dev" -recoverykeyfile "$UNLEASH_FV_KEY_FILE"; then
+		if ! _detect_unlock_stdin "$dev" "$UNLEASH_FV_KEY_FILE"; then
 			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
 			return 1
 		fi
@@ -166,7 +171,7 @@ _detect_unlock() {
 	fi
 	if [ -t 0 ] && [ "${UNLEASH_UNATTENDED:-0}" = 0 ]; then
 		info detect unlock "FileVault locked — enter password or recovery key"
-		if ! _detect_du apfs unlockVolume "$dev"; then
+		if ! _detect_du apfs unlockVolume "$dev" >/dev/null; then
 			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
 			return 1
 		fi
@@ -215,15 +220,19 @@ _detect_ensure_mounted() {
 
 _detect_ensure_writable() {
 	local mount="$1"
+	local probe="$mount/Library/Unleash/state/.write-test"
 	mkdir -p "$mount/Library/Unleash/state" || true
-	if ! touch "$mount/Library/Unleash/state/.write-test" 2>/tmp/unleash-touch.err; then
-		_detect_mn -uw "$mount" || true
-		if ! touch "$mount/Library/Unleash/state/.write-test" 2>/dev/null; then
+	if ! touch "$probe" 2>/tmp/unleash-touch.err; then
+		# No || true: remount failure is not fatal if the next touch succeeds.
+		if _detect_mn -uw "$mount"; then
+			:
+		fi
+		if ! touch "$probe"; then
 			result_fail E_VOLUME_RO detect remount "Data volume is read-only after mount -uw"
 			return 1
 		fi
 	fi
-	rm -f "$mount/Library/Unleash/state/.write-test"
+	rm -f "$probe"
 	return 0
 }
 
@@ -239,6 +248,9 @@ _detect_dump_candidates() {
 	done
 }
 
+# RESULT_* is set here (result_ok / result_fail). $(resolve_data_volume) is a subshell,
+# so callers that need RESULT_REASON must redirect stdout instead of capturing with $().
+# Fail still returns 1 with empty stdout so $() callers can detect it.
 resolve_data_volume() {
 	step detect resolve "Locating Data volume"
 
@@ -262,7 +274,7 @@ resolve_data_volume() {
 				fi
 				_DETECT_MOUNT="$spec"
 				_detect_ensure_writable "$_DETECT_MOUNT" || return 1
-				success detect resolve "Data volume $_DETECT_MOUNT"
+				result_ok detect resolve "Data volume $_DETECT_MOUNT"
 				printf '%s\n' "$_DETECT_MOUNT"
 				return 0
 			fi
@@ -325,7 +337,7 @@ EOF
 
 	_detect_ensure_writable "$mp" || return 1
 
-	success detect resolve "Data volume $mp"
+	result_ok detect resolve "Data volume $mp"
 	printf '%s\n' "$mp"
 	return 0
 }

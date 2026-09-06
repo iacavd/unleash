@@ -135,6 +135,9 @@ PLIST
 FAKE_MOUNT="$DETECT_MOUNT"
 PLIST="$DETECT_BIN/apfs.plist"
 MODE="$mode"
+UNLOCKED="$DETECT_BIN/unlocked"
+UNLOCK_ARGS="$DETECT_BIN/unlock.args"
+UNLOCK_STDIN="$DETECT_BIN/unlock.stdin"
 if [ "\$1" = "apfs" ] && [ "\$2" = "list" ] && [ "\$3" = "-plist" ]; then
   cat "\$PLIST"
   exit 0
@@ -159,18 +162,31 @@ if [ "\$1" = "info" ]; then
   if [ "\$disk" = "disk3s5" ] || [ "\$disk" = "\$FAKE_MOUNT" ]; then
     echo "   Device Identifier:         disk3s5"
     echo "   Volume Name:               Macintosh HD - Data"
-    echo "   Mounted:                   Yes"
-    echo "   Mount Point:               \$FAKE_MOUNT"
-    echo "   FileVault:                 No"
-    echo "   Locked:                    No"
+    if [ "\$MODE" = "locked" ] && [ ! -f "\$UNLOCKED" ]; then
+      echo "   Mounted:                   No"
+      echo "   FileVault:                 Yes"
+      echo "   Locked:                    Yes"
+    else
+      echo "   Mounted:                   Yes"
+      echo "   Mount Point:               \$FAKE_MOUNT"
+      echo "   FileVault:                 No"
+      echo "   Locked:                    No"
+    fi
     exit 0
   fi
   exit 1
 fi
 if [ "\$1" = "mount" ]; then
+  if [ "\$MODE" = "locked" ] && [ ! -f "\$UNLOCKED" ]; then
+    exit 1
+  fi
   exit 0
 fi
 if [ "\$1" = "apfs" ] && [ "\$2" = "unlockVolume" ]; then
+  printf '%s\n' "\$@" > "\$UNLOCK_ARGS"
+  cat > "\$UNLOCK_STDIN" || true
+  echo "Unlocked Volume disk3s5"
+  touch "\$UNLOCKED"
   exit 0
 fi
 exit 1
@@ -235,7 +251,8 @@ EOF
   resolve_data_volume >"$out" 2>"$err" || rc=$?
   [ "$rc" -eq 1 ]
   [ ! -s "$out" ]
-  [ "$RESULT_REASON" = "E_VOLUME_NOT_FOUND" ] || [ "$RESULT_REASON" = "E_VOLUME_AMBIGUOUS" ]
+  [ "$RESULT_REASON" = "E_VOLUME_NOT_FOUND" ]
+  grep -qE 'level=|event=' "$err"
   if grep -q "Enter Data volume" "$err"; then
     rm -f "$err" "$out"
     false
@@ -256,4 +273,53 @@ EOF
   [ "$RESULT_REASON" = "E_VOLUME_RO" ]
   grep -qE 'level=|event=' "$err"
   rm -f "$err" "$out"
+}
+
+@test "unattended locked volume with no secret is E_FV_LOCKED" {
+  _install_detect_mocks locked
+  UNLEASH_UNATTENDED=1
+  UNLEASH_VOLUME=""
+  UNLEASH_FV_PASSWORD_FILE=""
+  UNLEASH_FV_KEY_FILE=""
+  err=$(mktemp)
+  out=$(mktemp)
+  rc=0
+  resolve_data_volume >"$out" 2>"$err" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ ! -s "$out" ]
+  [ "$RESULT_REASON" = "E_FV_LOCKED" ]
+  grep -qE 'level=|event=' "$err"
+  if grep -q "Enter Data volume" "$err"; then
+    rm -f "$err" "$out"
+    false
+  fi
+  [ ! -f "$DETECT_BIN/unlock.args" ]
+  rm -f "$err" "$out"
+}
+
+@test "password-file unlock uses -stdinpassphrase and stdout is only the mount" {
+  _install_detect_mocks locked
+  UNLEASH_UNATTENDED=1
+  pw=$(mktemp)
+  printf 'test-fv-secret\n' > "$pw"
+  UNLEASH_FV_PASSWORD_FILE="$pw"
+  err=$(mktemp)
+  path=$(resolve_data_volume 2>"$err")
+  [ "$path" = "$DETECT_MOUNT" ]
+  case "$path" in
+    *$'\n'*) rm -f "$err" "$pw"; false ;;
+    *Unlocked*) rm -f "$err" "$pw"; false ;;
+    *"Locating Data volume"*) rm -f "$err" "$pw"; false ;;
+  esac
+  grep -qx -- '-stdinpassphrase' "$DETECT_BIN/unlock.args"
+  if grep -qx -- '-passphrase' "$DETECT_BIN/unlock.args"; then
+    rm -f "$err" "$pw"
+    false
+  fi
+  if grep -qx -- '-recoverykeyfile' "$DETECT_BIN/unlock.args"; then
+    rm -f "$err" "$pw"
+    false
+  fi
+  grep -q 'test-fv-secret' "$DETECT_BIN/unlock.stdin"
+  rm -f "$err" "$pw"
 }
