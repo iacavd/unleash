@@ -73,3 +73,28 @@ XML
   run grep -c "mdm.acme.com" "$TEST_DIR/private/etc/hosts"
   [ "$output" -gt 0 ]
 }
+
+@test "wipe_dep_records clears all cloudConfig files and flags" {
+  mkdir -p "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings"
+  mkdir -p "$TEST_DIR/private/var/db/ConfigurationProfiles/Store"
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound"
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigTimerCheck"
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/com.apple.mdm.prelogin.plist"
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/Store/test.profile"
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/.profilesAreInstalled"
+  DRY_RUN=false
+  wipe_dep_records "$TEST_DIR" 2>/dev/null || true
+  [ ! -f "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]
+  [ ! -f "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigTimerCheck" ]
+  [ ! -f "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/com.apple.mdm.prelogin.plist" ]
+  [ ! -f "$TEST_DIR/private/var/db/ConfigurationProfiles/Store/test.profile" ]
+  [ ! -f "$TEST_DIR/private/var/db/ConfigurationProfiles/.profilesAreInstalled" ]
+  [ -f "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordNotFound" ]
+}
+
+@test "auto_recovery_mode respects DRY_RUN" {
+  DRY_RUN=true
+  auto_recovery_mode "$TEST_DIR" 2>/dev/null || true
+  [ ! -f "$TEST_DIR/private/etc/hosts" ]
+}
+

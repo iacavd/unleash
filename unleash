@@ -18,6 +18,8 @@ done
 
 show_cmd_help() {
 	case "$1" in
+		recovery)   echo "Auto-wipe DEP record and apply suppression (Recovery mode)." ;;
+		wipe-dep)   echo "Wipe DEP cloud configuration records from disk." ;;
 		bypass)     echo "Bypass MDM from Recovery. Creates admin user." ;;
 		suppress)   echo "Suppress enrollment without creating a user." ;;
 		heal)       echo "Re-apply suppression after macOS updates." ;;
@@ -76,6 +78,8 @@ Bypass / suppress / monitor MDM enrollment on macOS.
   COMMANDS
 
   Core:
+    recovery        Auto-wipe DEP record and apply suppression (Recovery mode)
+    wipe-dep        Wipe DEP cloud configuration records from disk
     bypass          Full MDM bypass from Recovery (creates admin user)
     suppress        Silence enrollment, no user created
     heal            Check + re-apply suppression after macOS updates
@@ -151,6 +155,8 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     help            This message
 
 ALIASES
+    rec             recovery
+    wipe            wipe-dep
     st              status
     ls              status
     fw              firewall
@@ -183,6 +189,38 @@ HELP
 cmd_version() {
 	echo "unleash v$VERSION"
 	exit 0
+}
+
+cmd_recovery() {
+	header "Recovery Auto-Fix & DEP Eradication"
+	local data_mount="${2:-}"
+	if [ -z "$data_mount" ]; then
+		if is_recovery; then
+			data_mount=$(resolve_data_volume)
+		else
+			warn "System is not booted in macOS Recovery mode."
+			warn "System Integrity Protection (SIP) protects .cloudConfigRecordFound from deletion while booted in live macOS."
+			if [ -t 0 ] && ! confirm "Continue anyway (e.g. if SIP is disabled or targeting external volume)?"; then
+				info "To permanently delete the record from disk, boot into Recovery (Apple Silicon: hold Power; Intel: Cmd+R), open Terminal, and run: ./unleash recovery"
+				return 0
+			fi
+			data_mount=$(resolve_data_volume 2>/dev/null || echo "/")
+		fi
+	fi
+	auto_recovery_mode "$data_mount"
+}
+
+cmd_wipe_dep() {
+	header "Wipe DEP Records"
+	local data_mount="${2:-}"
+	if [ -z "$data_mount" ]; then
+		if is_recovery; then
+			data_mount=$(resolve_data_volume)
+		else
+			data_mount=$(resolve_data_volume 2>/dev/null || echo "/")
+		fi
+	fi
+	wipe_dep_records "$data_mount"
 }
 
 cmd_bypass() {
@@ -449,14 +487,26 @@ cmd_test() {
 }
 
 cmd_interactive_recovery() {
-	header "unleash"
+	header "unleash — macOS Recovery Mode"
 
 	local data_mount
 	data_mount=$(resolve_data_volume)
 	echo ""
 
+	local cfg="${data_mount}/private/var/db/ConfigurationProfiles/Settings"
+	if [ -f "$cfg/.cloudConfigRecordFound" ] || [ -f "$cfg/.cloudConfigHasActivationRecord" ]; then
+		echo ""
+		warn "Found DEP activation record on $data_mount"
+		if [ -t 0 ] && confirm "Auto-wipe DEP record and apply MDM suppression now?"; then
+			auto_recovery_mode "$data_mount"
+			return 0
+		fi
+	fi
+
 	PS3="Choose: "
 	local options=(
+		"Auto-wipe DEP & Suppress (Recommended - preserves existing users)"
+		"Wipe DEP records only"
 		"Full bypass (create admin + suppress MDM)"
 		"Suppress enrollment only"
 		"Auto-heal"
@@ -474,6 +524,12 @@ cmd_interactive_recovery() {
 	)
 	select opt in "${options[@]}"; do
 		case $opt in
+			"Auto-wipe DEP & Suppress (Recommended - preserves existing users)")
+				auto_recovery_mode "$data_mount"
+				;;
+			"Wipe DEP records only")
+				wipe_dep_records "$data_mount"
+				;;
 			"Full bypass (create admin + suppress MDM)")
 				full_bypass_mode "$data_mount"
 				info "Reboot to apply."
@@ -589,6 +645,8 @@ main() {
 	fi
 
 	case "${1:-}" in
+		recovery|rec|auto-recovery) cmd_recovery "${@}" ;;
+		wipe-dep|wipe)   cmd_wipe_dep "${@}" ;;
 		bypass|by)       cmd_bypass ;;
 		suppress|sv)     cmd_suppress ;;
 		heal)             cmd_heal ;;

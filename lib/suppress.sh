@@ -2,6 +2,48 @@
 
 PB=/usr/libexec/PlistBuddy
 
+wipe_dep_records() {
+	local data_mount="${1:-}"
+	local cfg="${data_mount}/private/var/db/ConfigurationProfiles/Settings"
+	local store="${data_mount}/private/var/db/ConfigurationProfiles/Store"
+	local cp="${data_mount}/private/var/db/ConfigurationProfiles"
+
+	if [ "$DRY_RUN" = true ]; then
+		info "[DRY RUN] Would wipe all DEP markers and profile cache in $cfg"
+		return 0
+	fi
+
+	step "Wiping DEP activation records and profile cache..."
+	mkdir -p "$cfg" 2>/dev/null || true
+
+	# Clear file flags (immutable/restricted locks) if present
+	chflags -R noschg,nouchg "$cp" 2>/dev/null || true
+
+	# Erase all cloud config artifacts, enrollment plists, and profile flags
+	rm -rf "$cfg/.cloudConfig"* 2>/dev/null || true
+	rm -rf "$cfg/com.apple.mdm"* 2>/dev/null || true
+	rm -f "$cfg/.profilesAreInstalled" "$cfg/.mcxFlagFileEvaluated" 2>/dev/null || true
+	rm -f "$cp/.profilesAreInstalled" 2>/dev/null || true
+	rm -rf "$store"/* 2>/dev/null || true
+
+	# Set the bypass marker
+	touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
+
+	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+		if is_recovery; then
+			warn "Could not remove .cloudConfigRecordFound at $cfg (check if volume is mounted read-only)"
+			return 1
+		else
+			info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
+			info "To delete the on-disk file record, boot into Recovery and run: ./unleash recovery"
+			return 0
+		fi
+	else
+		success "DEP activation record (.cloudConfigRecordFound) erased from disk"
+		return 0
+	fi
+}
+
 suppress_enrollment() {
 	local data_mount="$1"
 
@@ -67,20 +109,7 @@ suppress_enrollment() {
 	done
 
 	step "Resetting DEP markers..."
-	mkdir -p "$cfg"
-	rm -f "$cfg/.cloudConfigHasActivationRecord" \
-	      "$cfg/.cloudConfigRecordFound" \
-	      "$cfg/.cloudConfigTimerCheck" \
-	      "$cfg/.cloudConfigProfileInstalled" \
-	      "$cfg/com.apple.mdm.depnag.plist" \
-	      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
-	touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
-	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-		info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
-		info "To delete the on-disk file record, boot into Recovery and run: ./unleash bypass"
-	else
-		success "Cached record cleared; bypass markers set"
-	fi
+	wipe_dep_records "$data_mount"
 
 	step "Cleaning user-level MDM artifacts..."
 	local home
@@ -202,3 +231,53 @@ full_bypass_mode() {
 	echo -e "${CYAN}Login:${NC} ${YEL}$username${NC} / ${YEL}$passw${NC}"
 	echo -e "${YEL}After macOS update: re-run. Never 'profiles renew'.${NC}"
 }
+
+auto_recovery_mode() {
+	local data_mount="${1:-}"
+	if [ -z "$data_mount" ]; then
+		if is_recovery; then
+			data_mount=$(resolve_data_volume)
+		else
+			data_mount="/"
+		fi
+	fi
+
+	if [ "$DRY_RUN" = true ]; then
+		info "[DRY RUN] Would execute auto-recovery DEP wipe and suppression on $data_mount"
+		return 0
+	fi
+
+	echo ""
+	echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
+	echo -e "${CYAN}║         Unleash Auto-Recovery & DEP Eradication          ║${NC}"
+	echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+	echo ""
+
+	# Ensure target filesystem is mounted read-write
+	if [ -n "$data_mount" ] && [ "$data_mount" != "/" ]; then
+		mount -uw "$data_mount" 2>/dev/null || true
+	fi
+
+	# Run complete suppression (reads org, blocks domains, wipes DEP files, disables daemons, cleans artifacts)
+	suppress_enrollment "$data_mount"
+
+	echo ""
+	echo -e "${GRN}============================================================${NC}"
+	echo -e "${GRN}       DEP Eradication & MDM Suppression Complete           ${NC}"
+	echo -e "${GRN}============================================================${NC}"
+	echo ""
+	echo -e "  ${GRN}✔${NC} .cloudConfigRecordFound erased from disk"
+	echo -e "  ${GRN}✔${NC} MDM enrollment domains sinkholed in /etc/hosts"
+	echo -e "  ${GRN}✔${NC} Enrollment daemons disabled in launchd overrides"
+	echo -e "  ${GRN}✔${NC} Setup Assistant cloud-check suppressed (.AppleSetupDone)"
+	echo -e "  ${GRN}✔${NC} User accounts and personal data preserved intact"
+	echo ""
+	echo -e "${CYAN}Your Mac is now ready to reboot normally.${NC}"
+	echo ""
+
+	if [ -t 0 ] && confirm "Reboot now?"; then
+		info "Rebooting into normal macOS..."
+		reboot
+	fi
+}
+

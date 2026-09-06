@@ -61,7 +61,31 @@ graph TD
 
 ---
 
+### recovery — Auto-wipe DEP record & suppress (Recovery mode)
+
+```bash
+./unleash recovery
+```
+
+One-command automated DEP eradication and suppression. Ideal when you already have configured your Mac and just need to permanently wipe DEP activation records from disk without resetting or creating new users.
+1. Mounts the Data volume read-write and unlocks FileVault
+2. Completely erases `.cloudConfigRecordFound`, `.cloudConfig*`, and MDM cache plists
+3. Sets `.cloudConfigRecordNotFound` bypass sentinel
+4. Blocks Apple MDM servers in `/etc/hosts`
+5. Disables enrollment daemons in launchd overrides
+6. Cleans user-level LaunchAgents and preferences
+7. Prompts to reboot straight back into normal macOS
+
+### wipe-dep — Wipe DEP records only
+
+```bash
+./unleash wipe-dep
+```
+
+Erases all `.cloudConfig*` records and cache markers from the Data volume without altering hosts or launchd files.
+
 ### bypass — Full MDM bypass (Recovery only)
+
 
 ```bash
 ./unleash bypass
