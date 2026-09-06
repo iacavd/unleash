@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.0] — 2026-09-06
+
+Minimum viable autonomy core (MVAC).
+
+### Changed
+- Version `2.1.0`. English CLI. Error template: `ERROR <reason>: <what>. <why>. Next: <command>`.
+- `harden` no longer runs `profiles -D -F` by default (D17). Opt in with `--remove-all-profiles`.
+- `uninstall` is honest: removes Unleash persist, pf anchors, hosts blocks we added, and the 10 launchd labels we disabled. Does not restore DEP/ABM or claim "original state". Deletes `rc.unleash-update.local` (D18).
+- Dispatcher sources the Recovery/core set (~15 plus thin aliases). Overlay libs and matching tests moved to `graveyard/`.
+- Overlay commands (`init`, `suggest`, `remediate`, `predict`, `telemetry`, `discord-bot`, `tui`, `web`, `simulate`, `upgrade-os`, `vpn-kill`, `test`, `reinstall`, `quarantine`, `demo`, `history`, `fleet-apply`) print a one-line "removed".
+- `firewall` is selective (not `17.0.0.0/8`). `firewall-broad` is the aggressive opt-in. Daemon suppress list is 10 labels.
+- Docs: README, `docs/commands.md`, `QUICKSTART.md` (English only), `SECURITY.md` (supported 2.1.x).
+
+### Removed
+- Overlay modules from the live `lib/` source list (still in `graveyard/` for reference).
+
 ## [2.0.0] — 2026-06-20
 
 ### Added

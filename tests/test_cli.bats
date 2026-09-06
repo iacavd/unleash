@@ -196,3 +196,43 @@ setup() {
     false
   fi
 }
+
+@test "./unleash version is 2.1.0" {
+  run "$UNLEASH" version
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q 'unleash v2.1.0'
+}
+
+@test "./unleash web prints removed" {
+  run "$UNLEASH" web
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -qi 'removed'
+}
+
+@test "./unleash reinstall prints removed" {
+  run "$UNLEASH" reinstall
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -qi 'removed'
+}
+
+@test "./unleash test prints removed" {
+  run "$UNLEASH" test
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -qi 'removed'
+}
+
+@test "dispatcher source list does not include graveyard overlays" {
+  src=$(grep -E '^for _lib in ' "$UNLEASH")
+  echo "$src" | grep -q 'colors'
+  echo "$src" | grep -q 'pipeline'
+  echo "$src" | grep -q 'uninstall'
+  if echo "$src" | grep -Ewq 'discord|predict|telemetry|tui|simulate|upgrade|vpn|history|demo|fleet|web|init|suggest|remediate'; then
+    echo "dispatcher still sources overlay lib: $src" >&2
+    return 1
+  fi
+}
+
+@test "parse_flags --remove-all-profiles sets flag" {
+  parse_flags --remove-all-profiles
+  [ "$UNLEASH_REMOVE_ALL_PROFILES" = 1 ]
+}

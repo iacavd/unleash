@@ -41,23 +41,17 @@ chmod +x /tmp/unleash && /tmp/unleash bypass
 
 ## System Architecture
 
-Unleash uses a modular, defense-in-depth architecture spanning zero-touch boot payloads, APFS volume discovery, OpenDirectory user provisioning, kernel-level PF firewall anchors, APNs blocking, and self-healing LaunchDaemons.
-
-> 📊 **Explore the Interactive Architecture Diagram**: [docs/architecture/unleash-architecture.html](docs/architecture/unleash-architecture.html)
-> *(Features live theme switching, guided views, route tracing, and Prometheus metrics topology)*
+Unleash is a bash 3.2 toolkit: boot Recovery, find the Data volume, wipe DEP cloud-config records, plant suppression sentinels, block MDM at hosts + pf + launchd, optionally create a local admin, then persist a heal path so macOS updates and Migration Assistant cannot silently re-enroll.
 
 ```mermaid
 graph TD
-    A[USB / Recovery Boot<br/>payloads/autorun.sh] -->|mount & unlock| B[Detection Engine<br/>lib/detect.sh]
-    M[Fleet Manifest<br/>lib/fleet.sh] -.->|provision| B
+    A[USB / Recovery Boot<br/>payloads/autorun.sh] -->|mount and unlock| B[Detection Engine<br/>lib/detect.sh]
     B -->|create admin| C[OpenDirectory User<br/>lib/dscl.sh]
-    B -->|auto-wipe DEP| D[DEP Eradication & Suppression<br/>lib/suppress.sh]
+    B -->|wipe DEP| D[DEP wipe and suppression<br/>lib/suppress.sh]
     B -->|configure pf| E[PF Firewall Anchor<br/>lib/firewall.sh]
-    D -->|kill daemons| J[Live-OS Hardening<br/>lib/harden.sh]
-    E -->|drop 17.0.0.0/8| F[APNs Push Block<br/>lib/security.sh]
-    D -->|auto-heal hook| G[Auto-Heal Daemon<br/>lib/heal.sh]
-    G -->|telemetry stream| H[Web UI & Prometheus<br/>lib/web.sh]
-    F -->|DROP TCP| I((Apple MDM & APNs<br/>Blocked at Kernel))
+    D -->|optional live kill| J[Live-OS Hardening<br/>lib/harden.sh]
+    D -->|auto-heal| G[Auto-Heal Daemon<br/>lib/heal.sh]
+    E -->|selective MDM IPs| I((Apple MDM blocked at kernel))
 ```
 
 ---
@@ -68,7 +62,7 @@ graph TD
 ./unleash recovery
 ```
 
-One-command automated DEP eradication and suppression. Ideal when you already have configured your Mac and just need to permanently wipe DEP activation records from disk without resetting or creating new users.
+One-command DEP wipe and suppression. Use this when the Mac already has users and you only need to wipe DEP activation records from disk without creating a new admin.
 1. Mounts the Data volume read-write and unlocks FileVault
 2. Completely erases `.cloudConfigRecordFound`, `.cloudConfig*`, and MDM cache plists
 3. Sets `.cloudConfigRecordNotFound` bypass sentinel
@@ -92,14 +86,14 @@ Erases all `.cloudConfig*` records and cache markers from the Data volume withou
 ./unleash bypass
 ```
 
-Creates a temporary admin account and suppresses MDM. What it does:
+Creates a local admin account and suppresses MDM. What it does:
 
 1. Finds and mounts the macOS Data volume
-2. Unlocks FileVault if needed (asks for password)
-3. Creates an admin user (default Apple / 1234)
+2. Unlocks FileVault if needed (password or recovery key file; never argv)
+3. Creates an admin user (`--username` + `--password-file`; min 8 characters; no default `1234`)
 4. Removes DEP activation records
-5. Blocks 13+ Apple MDM domains plus your org's MDM host
-6. Disables 4 enrollment daemons
+5. Blocks 14 Apple MDM domains plus your org's MDM host
+6. Disables 10 enrollment daemons
 7. Cleans user-level MDM artifacts from all home directories
 8. Sets .AppleSetupDone so Setup Assistant is skipped
 
@@ -144,9 +138,11 @@ Removes the LaunchDaemon and unloads it.
 sudo ./unleash firewall
 ```
 
-Creates pf firewall rules that drop traffic to Apple's MDM IP ranges (17.0.0.0/8 and 17.128.0.0/10). pf works below DNS — DNS-over-HTTPS cannot bypass it.
+Creates pf firewall rules that drop traffic to resolved MDM IPs (selective; iCloud/App Store stay up). pf works below DNS — DNS-over-HTTPS cannot bypass it.
 
-**Warning**: this blocks all Apple services. iCloud, App Store, and system updates will not work while the firewall is active. Use `whitelist` instead if you need those.
+`whitelist` is an alias of the same selective engine (one anchor: `com.unleash/mdm`).
+
+**Warning**: `firewall-broad` blocks Apple's entire `17.0.0.0/8` range and breaks iCloud, App Store, and system updates. That mode is opt-in only.
 
 ### firewall-off — Remove firewall
 
@@ -172,13 +168,13 @@ sudo ./unleash harden
 
 Runs from the logged-in desktop after bypass. Does:
 
-1. Kills ManagedClient, mdmclient, activationd
-2. Forces profile removal
+1. Kills ManagedClient, mdmclient, activationd (pkill is allowed here; never from `status`/`audit`)
+2. Does **not** run `profiles -D -F` unless you pass `--remove-all-profiles` (that deletes every profile)
 3. Scans and removes MDM LaunchAgents per user
 4. Flushes DNS cache, restarts mDNSResponder
 5. Checks keychain for MDM identity certs
 6. Looks for JAMF/Intune/Workspace ONE agents
-7. Disables iCloud Private Relay (a DoH loophole)
+7. Attempts to disable iCloud Private Relay
 
 ### audit — Deep system scan
 
@@ -188,13 +184,14 @@ sudo ./unleash audit
 
 Comprehensive scan that checks: installed profiles, enrollment state, keychain certificates, user LaunchAgents, system LaunchDaemons, running processes, MDM agent binaries, pf firewall status. Ends with a risk score (LOW / MEDIUM / HIGH / CRITICAL).
 
-### status — MDM health check (Recovery only)
+### status — MDM health check (live and Recovery)
 
 ```bash
 ./unleash status
+./unleash status --json
 ```
 
-Shows DEP markers, hosts block, daemon overrides, profile enrollment, and backup status. Only works from Recovery because that's where the Data volume is cleanly accessible.
+Shows DEP markers, hosts block, daemon overrides, and probe results. Works on a live OS and from Recovery. Never kills processes.
 
 ### check — Pre-format / pre-upgrade assessment
 
@@ -215,14 +212,7 @@ Returns one of two verdicts:
 sudo ./unleash monitor
 ```
 
-Starts a daemon that checks MDM state every 5 minutes. If it detects MDM trying to re-enroll (DEP record appears, hosts block missing, enrollment becomes active), it auto-heals and sends a macOS notification.
-
-```bash
-sudo ./unleash monitor-stop      # stop it
-sudo ./unleash monitor-status    # check if it's running
-```
-
-Logs everything to `/var/log/unleash-monitor.log`. The daemon does not survive a reboot on its own — combine with `persist` for persistence.
+`monitor` is an alias of `persist`. The heal LaunchDaemon runs on boot and every 300 seconds. There is no separate KeepAlive loop.
 
 ### backup / restore — State save
 
@@ -270,16 +260,20 @@ Every command has a shorter alias:
 
 ## Options
 
-Global options that can go before any command:
+Flags go **after** the command (`./unleash apply --unattended`, not `./unleash --unattended apply`).
 
 | Option | Effect |
 |--------|--------|
+| `--unattended` | No prompts |
 | `--verbose` | Show debug messages |
 | `--log-file <path>` | Write log output to file |
+| `--volume <path>` | Target Data volume |
+| `--password-file <f>` | Admin password from file |
+| `--remove-all-profiles` | Harden: run `profiles -D -F` (deletes every profile) |
 
 Example:
 ```bash
-sudo ./unleash --verbose --log-file /tmp/unleash.log heal
+sudo ./unleash heal --verbose --log-file /tmp/unleash.log
 ```
 
 ---
@@ -325,16 +319,20 @@ Both IPv4 (0.0.0.0) and IPv6 (::) entries are added.
 
 ### Layer 3: Launchd daemon override
 
-macOS registers enrollment daemons that run at boot:
+macOS registers enrollment daemons that run at boot. Unleash disables **10** labels via the launchd override at `/private/var/db/com.apple.xpc.launchd/disabled.plist`:
 
 | Daemon | What it does |
 |--------|-------------|
+| `com.apple.ManagedClient` | Managed client |
 | `com.apple.ManagedClient.enroll` | Main enrollment |
 | `com.apple.ManagedClient.cloudConfiguration` | Cloud config |
-| `com.apple.mdmclient.daemon.runatboot` | MDM client |
+| `com.apple.ManagedClientAgent` | Agent |
+| `com.apple.ManagedClientAgent.agent` | Agent helper |
+| `com.apple.mdmclient` | MDM client |
+| `com.apple.mdmclient.daemon` | MDM daemon |
+| `com.apple.mdmclient.daemon.runatboot` | MDM at boot |
+| `com.apple.mdmclient.agent` | MDM agent |
 | `com.apple.activationd` | Device activation |
-
-Unleash disables them via the launchd override at `/private/var/db/com.apple.xpc.launchd/disabled.plist`.
 
 ### Layer 4: User-level cleanup
 
@@ -353,8 +351,8 @@ Unleash removes these from every home directory on the Data volume. This is the 
 
 The hosts file can be bypassed by DNS-over-HTTPS or cached DNS. pf (packet filter) operates at the kernel level and is immune to both. Unleash installs pf rules that either:
 
-- **firewall**: blocks Apple's entire IP range (17.0.0.0/8 + 17.128.0.0/10) — aggressive but 100% effective
-- **whitelist**: resolves only MDM domains to IPs and blocks those specifically — keeps iCloud working
+- **firewall** / **whitelist**: selective MDM IPs (default; iCloud-safe). Same engine, one anchor.
+- **firewall-broad**: Apple's entire `17.0.0.0/8` range — opt-in; breaks iCloud/App Store/updates.
 
 ## Intel vs Apple Silicon
 
@@ -393,7 +391,7 @@ The old bypass scripts only clean system-level artifacts (DEP markers, hosts, la
 
 **From Recovery**: run `unleash bypass` (or `suppress`). This cleans both system-level and user-level artifacts.
 
-**If MDM still comes back**: boot normally, run `sudo ./unleash harden` immediately after login. This kills active MDM processes and removes profiles before they can re-establish.
+**If MDM still comes back**: boot normally, run `sudo ./unleash harden` immediately after login. This kills active MDM processes. It does not delete all configuration profiles unless you also pass `--remove-all-profiles`.
 
 **For prevention**: run `sudo ./unleash persist` and `sudo ./unleash whitelist` before Migration Assistant. The LaunchDaemon + pf rules survive the migration and catch anything that slips through.
 
@@ -436,29 +434,20 @@ Use `--verbose` to see debug messages and `--log-file <path>` to write everythin
 ```
 unleash/
 ├── unleash                   # Main script (entry point)
-├── lib/
-│   ├── colors.sh             # Logging, colors, prompts
-│   ├── detect.sh             # Recovery detection, volume mounting
-│   ├── validate.sh           # Username/password validation
-│   ├── dscl.sh               # Directory Services (user CRUD)
-│   ├── suppress.sh           # DEP removal, hosts, daemon disable
-│   ├── backup.sh             # Backup and restore
-│   ├── status.sh             # Health check and audit
-│   ├── heal.sh               # Auto-heal + LaunchDaemon persist
-│   ├── firewall.sh           # pf rules management
-│   ├── harden.sh             # Live-OS hardening
-│   ├── whitelist.sh          # Selective iCloud-safe block
-│   ├── check.sh              # Pre-format assessment
-│   └── monitor.sh            # Background MDM watcher
+├── lib/                      # Core modules (sourced at startup)
+│   ├── colors.sh result.sh config.sh detect.sh validate.sh
+│   ├── dscl.sh suppress.sh backup.sh pipeline.sh
+│   ├── firewall.sh harden.sh heal.sh ma_detect.sh
+│   ├── doctor.sh status.sh uninstall.sh
+│   └── whitelist.sh check.sh monitor.sh automate.sh  # thin aliases
+├── graveyard/                # Overlay libs and tests (not sourced)
+├── data/mdm-ips.tsv data/mdm-agents.tsv
+├── payloads/autorun.sh
 ├── README.md
-├── CONTRIBUTING.md
-├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
 ├── CHANGELOG.md
 └── LICENSE (MIT)
 ```
-
-The standalone variant (`unleash-standalone.sh`) bundles everything into one file. Build it with `bash examples/build-standalone.sh`.
 
 ## Limitations
 
@@ -474,7 +463,7 @@ Unleash is designed to be safe:
 
 - **No SSV writes** — all changes target the Data volume
 - **Reversible** — `backup` saves state, `restore` reverts
-- **No data erasure** — never runs `profiles renew` or erase commands
+- **No data erasure by default** — never runs `profiles renew`; `profiles -D -F` only with `--remove-all-profiles`
 - **Idempotent** — running multiple times is harmless
 - **Prompts for confirmation** before destructive actions
 
@@ -495,8 +484,8 @@ Unleash checks for `/private/var/db/dslocal/nodes/Default` on the mounted volume
 ### macOS 27 (or future version)
 Unleash should work on any macOS version that uses the same MDM enrollment mechanism. If a new macOS changes the enrollment daemons or DEP markers, open an issue.
 
-### Monitor won't start
-Check if it's already running (`monitor-status`). Check permissions — it needs root. Check logs at `/var/log/unleash-monitor.log`.
+### Persist / monitor
+`monitor` is an alias of `persist`. Check `sudo ./unleash persist` and `/Library/LaunchDaemons/com.unleash.heal.plist`. Logs: `/Library/Unleash/logs/heal.log`.
 
 ## FAQ
 

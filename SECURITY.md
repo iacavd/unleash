@@ -4,7 +4,9 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.x     | ✅ Currently supported |
+| 2.1.x   | Currently supported |
+| 2.0.x   | Unsupported |
+| 1.x     | Unsupported |
 
 ## Reporting a Vulnerability
 
@@ -20,7 +22,7 @@ To report a vulnerability:
 
 - **No system volume writes**: All operations target the Data volume only
 - **Reversible**: `unleash backup`/`restore` saves and reverts all changes
-- **No data loss**: Never runs `profiles renew` or erase commands
+- **No data loss by default**: Never runs `profiles renew`. `profiles -D -F` only with `--remove-all-profiles`
 - **No ABM modification**: Does not touch Apple Business Manager records
 
 ## Known Limitations

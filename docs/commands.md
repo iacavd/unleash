@@ -70,16 +70,24 @@ sudo ./unleash unpersist
 
 | Command | Description | Privilege |
 |---------|-------------|-----------|
-| `firewall` | Block Apple MDM IP ranges via pf | sudo |
+| `firewall` | Block resolved MDM IPs via pf (selective, iCloud-safe) | sudo |
+| `firewall-broad` | Block Apple's entire `17.0.0.0/8` range (breaks iCloud) | sudo |
 | `firewall-off` | Remove pf firewall MDM block | sudo |
-| `whitelist` | Block MDM domains only, keep iCloud/App Store | sudo |
+| `whitelist` | Alias of `firewall` (same selective engine) | sudo |
 
 ### `firewall`
-Kernel-level packet filtering. Blocks Apple's entire IP range (`17.0.0.0/8`).
-DoH-proof — cannot be bypassed by DNS-over-HTTPS.
-**Warning:** Breaks iCloud, App Store, and system updates.
+Kernel-level packet filtering. **Selective** — resolves MDM domains to IPs and blocks those.
+Default is iCloud/App Store-safe. DoH-proof — cannot be bypassed by DNS-over-HTTPS.
+`whitelist` is the same command (one anchor: `com.unleash/mdm`).
 ```bash
 sudo ./unleash firewall
+```
+
+### `firewall-broad`
+Blocks Apple's entire IP range (`17.0.0.0/8`).
+**Warning:** Breaks iCloud, App Store, and system updates. Opt-in only.
+```bash
+sudo ./unleash firewall-broad
 ```
 
 ### `firewall-off`
@@ -89,8 +97,7 @@ sudo ./unleash firewall-off
 ```
 
 ### `whitelist`
-Resolves only MDM domains to IPs and blocks those specifically.
-Keeps iCloud and App Store working while blocking MDM enrollment.
+Alias of `firewall`. Same selective engine, same anchor.
 ```bash
 sudo ./unleash whitelist
 ```
@@ -105,10 +112,12 @@ sudo ./unleash whitelist
 | `audit` | Deep system scan with risk score | sudo |
 
 ### `harden`
-Kills running MDM processes, removes configuration profiles, and flushes DNS cache.
+Kills running MDM processes and flushes DNS cache.
+Does **not** run `profiles -D -F` unless you pass `--remove-all-profiles` (that deletes every profile).
 Useful when MDM is actively enrolling on a booted system.
 ```bash
 sudo ./unleash harden
+sudo ./unleash harden --remove-all-profiles
 ```
 
 ### `audit`
@@ -189,15 +198,9 @@ sudo ./unleash dualboot
 
 ---
 
-## Smart Commands (v2.0)
+## Smart Commands (removed in 2.1)
 
-| Command | Description |
-|---------|-------------|
-| `init` | Interactive setup wizard |
-| `suggest` | Risk-based system analysis and recommendations |
-| `remediate` | Per-org MDM cleanup |
-| `predict` | Serial number lookup — predict which org enrolled this Mac |
-| `telemetry` | Manage anonymous usage stats (opt-in) |
+`init`, `suggest`, `remediate`, `predict`, and `telemetry` were overlay commands. They print a one-line "removed" and are not sourced.
 
 ### `init`
 Interactive wizard that runs the full setup:
@@ -273,7 +276,8 @@ sudo ./unleash update
 ```
 
 ### `uninstall`
-Removes all Unleash traces. Prompts for confirmation.
+Removes Unleash persist, pf anchors, hosts blocks we added, and launchd overrides we set.
+Does **not** restore DEP/ABM enrollment or original MDM state.
 ```bash
 sudo ./unleash uninstall
 ```

@@ -15,7 +15,7 @@ _doctor_libdir() {
 }
 
 _doctor_core_libs() {
-  printf '%s\n' colors result config detect validate dscl suppress backup pipeline status heal firewall doctor
+  printf '%s\n' colors result config detect validate dscl suppress backup pipeline status heal firewall harden ma_detect doctor uninstall
 }
 
 _doctor_volume_is_disk_id() {
@@ -193,7 +193,7 @@ run_doctor() {
   if [ -z "$libdir" ]; then
     end_fail; echo "     LIB_DIR unset"; errors=$((errors + 1))
   else
-    for _lib in colors result config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
+    for _lib in colors result config detect validate dscl suppress backup pipeline status heal firewall harden whitelist check monitor doctor selfupdate uninstall report ma_detect automate webhook; do
       total=$((total + 1))
       [ -f "$libdir/$_lib.sh" ] || missing=$((missing + 1))
     done

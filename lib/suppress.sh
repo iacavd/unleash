@@ -312,9 +312,7 @@ auto_recovery_mode() {
 	fi
 
 	echo ""
-	echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-	echo -e "${CYAN}║         Unleash Auto-Recovery & DEP Eradication          ║${NC}"
-	echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+	info "Auto-recovery: wipe DEP records and apply suppression on $data_mount"
 	echo ""
 
 	# Ensure target filesystem is mounted read-write
@@ -326,17 +324,7 @@ auto_recovery_mode() {
 	suppress_enrollment "$data_mount"
 
 	echo ""
-	echo -e "${GRN}============================================================${NC}"
-	echo -e "${GRN}       DEP Eradication & MDM Suppression Complete           ${NC}"
-	echo -e "${GRN}============================================================${NC}"
-	echo ""
-	echo -e "  ${GRN}✔${NC} .cloudConfigRecordFound erased from disk"
-	echo -e "  ${GRN}✔${NC} MDM enrollment domains sinkholed in /etc/hosts"
-	echo -e "  ${GRN}✔${NC} Enrollment daemons disabled in launchd overrides"
-	echo -e "  ${GRN}✔${NC} Setup Assistant cloud-check suppressed (.AppleSetupDone)"
-	echo -e "  ${GRN}✔${NC} User accounts and personal data preserved intact"
-	echo ""
-	echo -e "${CYAN}Your Mac is now ready to reboot normally.${NC}"
+	info "Suppression applied on $data_mount. Verify with: ./unleash status"
 	echo ""
 
 	if [ -t 0 ] && confirm "Reboot now?"; then

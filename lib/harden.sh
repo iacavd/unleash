@@ -1,32 +1,83 @@
+# shellcheck shell=bash
+# Live-OS extra cleanup. Not default on apply (needs --harden).
+# D17: profiles -D -F is data-loss; only with --remove-all-profiles.
+
+_harden_enrollment_labels() {
+	printf '%s\n' \
+		com.apple.ManagedClient \
+		com.apple.ManagedClient.enroll \
+		com.apple.ManagedClient.cloudConfiguration \
+		com.apple.ManagedClientAgent \
+		com.apple.ManagedClientAgent.agent \
+		com.apple.mdmclient \
+		com.apple.mdmclient.daemon \
+		com.apple.mdmclient.daemon.runatboot \
+		com.apple.mdmclient.agent \
+		com.apple.activationd
+}
+
+_harden_is_recovery() {
+	if type is_recovery >/dev/null 2>&1 && is_recovery; then
+		return 0
+	fi
+	return 1
+}
+
+_harden_dry_run() {
+	[ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]
+}
+
+# $1=label. Deletes every configuration profile on the Mac. Opt-in only.
+_harden_remove_all_profiles() {
+	local installed
+	if [ ! -x "${PROFILES:-/usr/bin/profiles}" ] && ! command -v profiles >/dev/null 2>&1; then
+		info "profiles command not available; skip profile removal"
+		return 0
+	fi
+	installed=$(profiles -C 2>/dev/null | grep -c "ProfileDisplayName" || true)
+	if [ "${installed:-0}" -eq 0 ]; then
+		info "No installed profiles to remove"
+		return 0
+	fi
+	warn "Removing ALL configuration profiles ($installed). This is irreversible without a backup."
+	if profiles -D -F; then
+		success "Forced profile removal finished"
+	else
+		warn "ERROR E_PROFILES_FAIL: profiles -D -F failed. SIP or user approval may block it. Next: boot Recovery and run ./unleash apply"
+	fi
+}
 
 harden_live_os() {
-	step "Removing residual MDM profiles..."
-	if command -v profiles &>/dev/null; then
-		local installed
-		installed=$(profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
-		if [ "$installed" -gt 0 ]; then
-			sudo profiles -D -F 2>/dev/null && success "Forced profile removal" \
-				|| warn "Profile removal failed"
-		else
-			info "No installed profiles to remove"
+	step "Live-OS harden"
+
+	if _harden_dry_run; then
+		info "[DRY RUN] Would kill MDM agents, disable enrollment labels, flush DNS"
+		if [ "${UNLEASH_REMOVE_ALL_PROFILES:-0}" = 1 ]; then
+			info "[DRY RUN] Would also run profiles -D -F (deletes every profile)"
 		fi
-	else
-		warn "profiles command not available"
+		return 0
 	fi
 
-	step "Resetting DEP cloud configuration markers..."
+	if [ "${UNLEASH_REMOVE_ALL_PROFILES:-0}" = 1 ]; then
+		step "Removing all configuration profiles (--remove-all-profiles)"
+		_harden_remove_all_profiles
+	else
+		info "Skipping profiles -D -F (deletes every profile). Pass --remove-all-profiles to opt in."
+	fi
+
+	step "Resetting DEP cloud configuration markers"
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
 	if [ -d "$cfg" ]; then
-		sudo rm -f "$cfg/.cloudConfigHasActivationRecord" \
+		rm -f "$cfg/.cloudConfigHasActivationRecord" \
 		      "$cfg/.cloudConfigRecordFound" \
 		      "$cfg/.cloudConfigTimerCheck" \
 		      "$cfg/.cloudConfigProfileInstalled" \
 		      "$cfg/com.apple.mdm.depnag.plist" \
 		      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
-		sudo touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
+		touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
 		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-			info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
-			info "To delete the on-disk file record, boot into Recovery and run: ./unleash recovery"
+			info "SIP disabled is required to delete .cloudConfigRecordFound on a live volume."
+			info "SIP enabled — on-disk DEP wipe needs Recovery. Next: ./unleash recovery"
 		else
 			success "DEP cached records cleared; bypass markers set"
 		fi
@@ -34,36 +85,30 @@ harden_live_os() {
 		info "No DEP configuration markers found"
 	fi
 
-	step "Disabling enrollment daemons in launchd overrides..."
+	step "Disabling enrollment daemons in launchd overrides"
 	local ldp="/private/var/db/com.apple.xpc.launchd/disabled.plist"
-	local pb="/usr/libexec/PlistBuddy"
+	local pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+	local label
 	if [ -x "$pb" ]; then
-		sudo mkdir -p "$(dirname "$ldp")" 2>/dev/null || true
+		mkdir -p "$(dirname "$ldp")" 2>/dev/null || true
 		if [ ! -f "$ldp" ]; then
-			printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' | sudo tee "$ldp" >/dev/null 2>&1 || true
+			printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$ldp" 2>/dev/null || true
 		fi
-		for label in \
-			com.apple.ManagedClient \
-			com.apple.ManagedClient.enroll \
-			com.apple.ManagedClient.cloudConfiguration \
-			com.apple.ManagedClientAgent \
-			com.apple.ManagedClientAgent.agent \
-			com.apple.mdmclient \
-			com.apple.mdmclient.daemon \
-			com.apple.mdmclient.daemon.runatboot \
-			com.apple.mdmclient.agent \
-			com.apple.activationd; do
-			sudo "$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
-				|| sudo "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
-		done
+		while IFS= read -r label || [ -n "$label" ]; do
+			[ -n "$label" ] || continue
+			"$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
+				|| "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
+		done <<EOF
+$(_harden_enrollment_labels)
+EOF
 		success "Enrollment daemons disabled in launchd overrides"
 	fi
 
-	step "Cleaning user LaunchAgents..."
-	local home
+	step "Cleaning user LaunchAgents"
+	local home cleaned agent
 	for home in /Users/*/; do
 		[ -d "$home/Library/LaunchAgents" ] || continue
-		local cleaned=0
+		cleaned=0
 		for agent in "$home/Library/LaunchAgents/"*; do
 			[ -f "$agent" ] || continue
 			if grep -qiE "(mdm|enrollment|managedclient|depnotify)" "$agent" 2>/dev/null; then
@@ -71,117 +116,111 @@ harden_live_os() {
 				cleaned=$((cleaned + 1))
 			fi
 		done
-		[ "$cleaned" -gt 0 ] && success "$(basename "$home"): removed $cleaned agent(s)" \
-			|| info "$(basename "$home"): clean"
+		if [ "$cleaned" -gt 0 ]; then
+			success "$(basename "$home"): removed $cleaned agent(s)"
+		else
+			info "$(basename "$home"): clean"
+		fi
 	done
 
-	step "Flushing DNS cache..."
-	if command -v dscacheutil &>/dev/null; then
-		sudo dscacheutil -flushcache && success "DNS cache flushed"
+	step "Flushing DNS cache"
+	if [ -x "${DSCACHEUTIL:-/usr/bin/dscacheutil}" ] || command -v dscacheutil >/dev/null 2>&1; then
+		dscacheutil -flushcache && success "DNS cache flushed" || warn "dscacheutil -flushcache failed"
 	fi
-	if command -v killall &>/dev/null; then
-		sudo killall -HUP mDNSResponder 2>/dev/null && success "mDNSResponder restarted" || true
+	if command -v killall >/dev/null 2>&1; then
+		killall -HUP mDNSResponder 2>/dev/null && success "mDNSResponder restarted" || true
 	fi
 
-	step "Checking for MDM keychain items..."
-	if command -v security &>/dev/null; then
+	step "Checking for MDM keychain items"
+	if command -v security >/dev/null 2>&1; then
 		local identities
-		identities=$(sudo security find-identity -p basic 2>/dev/null | grep -ci mdm || true)
-		if [ "$identities" -gt 0 ]; then
+		identities=$(security find-identity -p basic 2>/dev/null | grep -ci mdm || true)
+		if [ "${identities:-0}" -gt 0 ]; then
 			warn "$identities MDM-related identity(ies) found in keychain"
-			warn "Manual review recommended: security find-identity -p basic | grep -i mdm"
+			warn "Manual review: security find-identity -p basic | grep -i mdm"
 		else
 			info "No MDM identities found in keychain"
 		fi
 	else
-		warn "security command not available"
+		info "security command not available"
 	fi
 
-	step "Checking for JAMF/Intune/Workspace ONE agents..."
+	step "Checking for JAMF/Intune/Workspace ONE agents"
+	local agent_bin
 	for agent_bin in /usr/local/bin/jamf /usr/local/bin/intune /opt/cisco/anyconnect/bin/*; do
 		if [ -f "$agent_bin" ]; then
 			warn "MDM agent binary found: $agent_bin"
 		fi
 	done
 
-	step "Disabling iCloud Private Relay (DoH source)..."
-	if command -v defaults &>/dev/null; then
-		sudo defaults write /Library/Preferences/com.apple.networkextensions.plist PrivateRelayEnabled -bool false 2>/dev/null \
+	step "Disabling iCloud Private Relay"
+	if command -v defaults >/dev/null 2>&1; then
+		defaults write /Library/Preferences/com.apple.networkextensions.plist PrivateRelayEnabled -bool false 2>/dev/null \
 			&& success "Private Relay disabled" \
 			|| info "Private Relay not configurable (expected on some configs)"
 	fi
 
-	step "Ensuring packet filter (pf) firewall is active..."
 	if [ -f "/etc/pf.conf" ] && grep -q "com.unleash" "/etc/pf.conf" 2>/dev/null; then
-		if command -v pfctl &>/dev/null; then
-			sudo pfctl -e -f /etc/pf.conf 2>/dev/null && success "PF firewall re-loaded and active" \
+		step "Reloading pf anchor"
+		if [ -x "${PFCTL:-/sbin/pfctl}" ] || command -v pfctl >/dev/null 2>&1; then
+			pfctl -e -f /etc/pf.conf 2>/dev/null && success "PF reloaded" \
 				|| info "PF status unchanged"
 		fi
 	fi
 
-	step "Terminating MDM daemons and processes..."
-	local mdm_services=(
-		"com.apple.ManagedClient"
-		"com.apple.ManagedClient.enroll"
-		"com.apple.ManagedClient.cloudConfiguration"
-		"com.apple.ManagedClientAgent"
-		"com.apple.ManagedClientAgent.agent"
-		"com.apple.mdmclient"
-		"com.apple.mdmclient.daemon"
-		"com.apple.mdmclient.daemon.runatboot"
-		"com.apple.mdmclient.agent"
-	)
-
-	if command -v launchctl &>/dev/null; then
-		local console_uid
-		console_uid=$(stat -f "%u" /dev/console 2>/dev/null || echo "501")
-		for svc in "${mdm_services[@]}"; do
-			sudo launchctl bootout "system/$svc" 2>/dev/null || true
-			sudo launchctl kill SIGKILL "system/$svc" 2>/dev/null || true
-			sudo launchctl disable "system/$svc" 2>/dev/null || true
-
-			sudo launchctl bootout "gui/$console_uid/$svc" 2>/dev/null || true
-			sudo launchctl kill SIGKILL "gui/$console_uid/$svc" 2>/dev/null || true
-			sudo launchctl disable "gui/$console_uid/$svc" 2>/dev/null || true
-		done
+	# pkill of MDM agents is allowed here (live harden), never from status/audit.
+	if _harden_is_recovery; then
+		info "In Recovery — skip live process kill (no running MDM agents on this volume)"
+		return 0
 	fi
 
+	step "Terminating MDM daemons and processes"
+	local console_uid svc launchctl
+	launchctl="${LAUNCHCTL:-/bin/launchctl}"
+	if [ -x "$launchctl" ] || command -v launchctl >/dev/null 2>&1; then
+		console_uid=$(stat -f "%u" /dev/console 2>/dev/null || echo "501")
+		while IFS= read -r svc || [ -n "$svc" ]; do
+			[ -n "$svc" ] || continue
+			"$launchctl" bootout "system/$svc" 2>/dev/null || true
+			"$launchctl" kill SIGKILL "system/$svc" 2>/dev/null || true
+			"$launchctl" disable "system/$svc" 2>/dev/null || true
+			"$launchctl" bootout "gui/$console_uid/$svc" 2>/dev/null || true
+			"$launchctl" kill SIGKILL "gui/$console_uid/$svc" 2>/dev/null || true
+			"$launchctl" disable "gui/$console_uid/$svc" 2>/dev/null || true
+		done <<EOF
+$(_harden_enrollment_labels)
+EOF
+	fi
+
+	local p
 	for p in ManagedClient mdmclient; do
 		if pgrep -fi "$p" >/dev/null 2>&1; then
-			sudo pkill -9 -fi "$p" 2>/dev/null || true
+			pkill -9 -fi "$p" 2>/dev/null || true
 		fi
 	done
 	sleep 0.2
 	if pgrep -fi "ManagedClient|mdmclient" >/dev/null 2>&1; then
-		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
-		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
+		pkill -9 -fi "ManagedClient" 2>/dev/null || true
+		pkill -9 -fi "mdmclient" 2>/dev/null || true
 	fi
 	if pgrep -fi "ManagedClient|mdmclient" >/dev/null 2>&1; then
-		warn "Some MDM processes still running"
+		warn "Some MDM processes still running. Next: sudo ./unleash harden"
 	else
-		success "All MDM daemons terminated"
+		success "MDM daemons terminated"
 	fi
-
-	echo ""
-	echo -e "${GRN}============================================${NC}"
-	echo -e "${GRN}      Live-OS Hardening Complete             ${NC}"
-	echo -e "${GRN}============================================${NC}"
-	echo ""
-	echo -e "${YEL}Reboot recommended to verify all changes.${NC}"
-	echo -e "${YEL}For per-app blocking: install Little Snitch or LuLu.${NC}"
 }
 
 harden_status() {
-	step "System extension status..."
-	if command -v systemextensionsctl &>/dev/null; then
+	step "System extension status"
+	if command -v systemextensionsctl >/dev/null 2>&1; then
 		systemextensionsctl list 2>/dev/null | head -20 || true
 	else
 		info "systemextensionsctl not available"
 	fi
 
-	step "MDM-related LaunchDaemons loaded..."
+	step "MDM-related LaunchDaemons loaded"
 	launchctl list 2>/dev/null | grep -iE "mdm|managedclient" || info "None loaded"
 
-	step "Running MDM processes..."
+	step "Running MDM processes"
 	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || info "None running"
 }

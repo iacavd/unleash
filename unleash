@@ -17,12 +17,13 @@ SHASUM=/usr/bin/shasum
 CSRUTIL=/usr/bin/csrutil
 PROFILES=/usr/bin/profiles
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-for _lib in colors result config detect validate dscl suppress backup pipeline status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
+# Recovery/core + thin aliases + later (update/report/webhook). Overlay lives in graveyard/.
+for _lib in colors result config detect validate dscl suppress backup pipeline status heal firewall harden whitelist check monitor doctor selfupdate uninstall report ma_detect automate webhook; do
 	_lib_path="$LIB_DIR/$_lib.sh"
 	if [ -f "$_lib_path" ]; then
 		source "$_lib_path"
@@ -31,6 +32,11 @@ for _lib in colors result config detect validate dscl suppress backup pipeline s
 		exit 1
 	fi
 done
+
+_cmd_removed() {
+	echo "ERROR: $1 was removed in Unleash 2.1. Overlay commands are not part of the autonomy core. Next: ./unleash help" >&2
+	exit 1
+}
 
 # error_exit (lib/colors.sh) stays exit 1 for usage/unhandled abort.
 # Process exits are 0, 1, 2, 3, 4 only — matrix in lib/result.sh.
@@ -60,41 +66,29 @@ show_cmd_help() {
 		firewall)   echo "Block MDM IPs via pf (selective, iCloud-safe)." ;;
 		firewall-broad) echo "Block ALL Apple IPs via pf (aggressive, blocks iCloud)." ;;
 		firewall-off) echo "Remove pf MDM block." ;;
-		harden)     echo "Kill MDM processes + remove profiles + flush DNS." ;;
-		audit)      echo "Deep system scan with risk score." ;;
-		whitelist)  echo "Block only MDM domains, keep iCloud/App Store." ;;
+		harden)     echo "Kill MDM processes + flush DNS (live OS). No profiles -D -F unless --remove-all-profiles." ;;
+		audit)      echo "Alias of status (never kills processes)." ;;
+		whitelist)  echo "Alias of firewall (selective, iCloud-safe)." ;;
 		backup)     echo "Save current state." ;;
 		restore)    echo "Restore from backup." ;;
 		backup-list) echo "List available backups." ;;
-		dualboot)   echo "Target an external macOS install." ;;
+		dualboot)   echo "Target an external macOS install (same pipeline as apply)." ;;
 		status)     echo "Show MDM enrollment status (live and Recovery)." ;;
 		check)      echo "Pre-format / pre-upgrade safety report." ;;
-		history)    echo "Show event log from monitor/heal runs." ;;
-		history-clear) echo "Clear event log." ;;
-		monitor)    echo "Start background MDM monitor (5 min interval)." ;;
-		monitor-install) echo "Install monitor as LaunchDaemon." ;;
-		monitor-uninstall) echo "Remove monitor LaunchDaemon." ;;
-		monitor-stop) echo "Stop the monitor daemon." ;;
-		monitor-status) echo "Check if monitor is running." ;;
+		history|history-clear) echo "Removed. Overlay command is not part of the autonomy core." ;;
+		monitor)    echo "Alias of persist (heal daemon)." ;;
+		monitor-install) echo "Alias of persist." ;;
+		monitor-uninstall) echo "Alias of unpersist." ;;
+		monitor-stop) echo "Stop leftover monitor pidfile." ;;
+		monitor-status) echo "Check leftover monitor pidfile." ;;
 		doctor)     echo "Run pre-flight diagnostics." ;;
-		init)       echo "Interactive setup wizard." ;;
-		suggest)    echo "Risk-based recommendations." ;;
-		remediate)  echo "Per-org MDM cleanup." ;;
-		predict)    echo "Look up serial number enrollment." ;;
-		telemetry)  echo "Manage anonymous usage stats (opt-in)." ;;
-		discord-bot) echo "Start Discord MDM alert bot." ;;
-		discord-bot-stop) echo "Stop Discord bot." ;;
-		discord-bot-status) echo "Check Discord bot status." ;;
-		demo)       echo "Simulated bypass flow (no changes)." ;;
+		init|suggest|remediate|predict|telemetry|discord-bot|discord-bot-stop|discord-bot-status|demo|tui|web|web-stop|simulate|upgrade-os|vpn-kill|vpn-kill-remove|vpn-kill-status|quarantine|fleet-apply|reinstall|test)
+			echo "Removed. Overlay command is not part of the autonomy core." ;;
 		update)     echo "Self-update from GitHub releases." ;;
-		uninstall)  echo "Remove all Unleash traces." ;;
-		reinstall)  echo "Uninstall + clean install." ;;
+		uninstall)  echo "Remove Unleash persist, pf anchors, hosts blocks, and launchd overrides we set. Does not restore DEP." ;;
 		report)     echo "Generate full status report (markdown or --json)." ;;
-		config)     echo "View/edit ~/.unleash.conf settings." ;;
-		vpn-kill)   echo "Install pf kill-switch (blocks MDM outside VPN)." ;;
-		vpn-kill-remove) echo "Remove VPN kill-switch." ;;
-		vpn-kill-status) echo "Check VPN kill-switch status." ;;
-		auto-all)   echo "Automated deployment: bypass+firewall+persist (no prompts)." ;;
+		config)     echo "View/edit persistent settings." ;;
+		auto-all)   echo "Unattended apply (no prompts; requires intent sidecar)." ;;
 		apns-block) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
 		apns-unblock) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
 		version)    echo "Show version and exit." ;;
@@ -107,110 +101,77 @@ show_help() {
 	cat <<'HELP'
 Usage: ./unleash <command> [options]
 
-Bypass / suppress / monitor MDM enrollment on macOS.
+Bypass / suppress MDM enrollment on macOS. English CLI. Flags after the command.
 
   COMMANDS
 
   Core:
-    apply           Apply MDM suppression (flags after the command)
-    recovery        Auto-wipe DEP record and apply suppression (Recovery mode)
-    wipe-dep        Wipe DEP cloud configuration records from disk
-    bypass          Full MDM bypass from Recovery (creates admin user)
-    suppress        Silence enrollment, no user created
-    heal            Check + re-apply suppression after macOS updates
+    apply           Apply MDM suppression (same path as auto-all)
+    recovery        Apply suppression from Recovery (no admin user)
+    wipe-dep        Alias of apply (hosts + daemons + DEP wipe)
+    bypass          Apply and create an admin user
+    suppress        Alias of apply (no admin user)
+    heal            Re-apply suppression after macOS updates
+    auto-all        Unattended apply (requires intent sidecar)
 
   Persistence:
-    persist         Install LaunchDaemon (auto-heal on every boot)
+    persist         Install LaunchDaemon (heal on boot and every 300s)
     unpersist       Remove the persistence LaunchDaemon
+    monitor         Alias of persist
 
   Firewall:
-    firewall        Block MDM IPs at kernel level via pf (selective, iCloud-safe)
-    firewall-broad  Block ALL Apple IPs (aggressive, blocks iCloud too)
-    firewall-off    Remove pf rules
-    whitelist       Block only MDM endpoints, keep iCloud/App Store
+    firewall        Block MDM IPs via pf (selective, iCloud-safe)
+    firewall-broad  Block ALL Apple IPs (17.0.0.0/8; breaks iCloud)
+    firewall-off    Remove pf MDM block
+    whitelist       Alias of firewall (same selective engine)
 
-  Living System:
-    harden          Kill MDM processes + remove profiles + flush DNS
-    audit           Deep system scan with risk score
-    quarantine      Quarantine MDM mobileconfig payloads
-
-  Security & Defense:
-    apns-block      Removed (old rule dropped TCP 443 to 17.0.0.0/8)
-    apns-unblock    Removed (see apns-block)
-
-  Fleet & Automation:
-    auto-all        Fully automated deployment (no prompts)
-                    Options: --username X --password-file F --volume /path
-    fleet-apply     Apply declarative fleet manifest (--manifest file.json)
-    upgrade-os      Safe macOS software update wrapper with auto-heal
-    simulate        Dry-run simulation of planned modifications
-    tui             Interactive terminal UI dashboard
-
-  Monitoring:
+  Live OS:
+    harden          Kill MDM processes + flush DNS
+                    (profiles -D -F only with --remove-all-profiles)
+    audit           Alias of status (never kills processes)
     check           Pre-format / pre-upgrade safety report
-    history         Show event log from monitor/heal runs
-    test            Dry-run mode: simulate without changing anything
-    monitor         Background daemon (watches MDM every 5 min)
-    monitor-install Install monitor as LaunchDaemon (boot persistent)
-    monitor-uninstall Remove monitor LaunchDaemon
-    monitor-stop    Stop the daemon
-    monitor-status  Check if daemon is running
-    webhook-test    Dispatch test alert (discord/slack/telegram/ntfy/generic)
-    web             Embedded Web UI & Prometheus metrics server (--port 8080)
-    web-stop        Stop embedded Web server
 
   State:
-    backup          Save hosts, profiles, launchd state, pf.conf
-    restore         Revert from backup
-    backup-list     List available backup snapshots
-    dualboot        Target an external macOS install
+    backup          Save hosts, profiles, launchd, pf.conf
+    restore         Revert from a snapshot (--snapshot ID)
+    backup-list     List snapshots
+    dualboot        Apply to an external macOS install
+    uninstall       Remove Unleash persist, pf, hosts, launchd overrides
+                    Does not restore DEP/ABM or original MDM state
 
   Diagnostics:
-    doctor          Run pre-flight diagnostics & security posture check
-    report          Generate a full status report (markdown or --json)
-    demo            Run simulated bypass flow (no real changes)
+    doctor          Pre-flight diagnostics (--gate fail-closed)
+    status          MDM enrollment status (live and Recovery)
+    report          Status report (markdown or --json)
+    config          Persistent settings
+    update          Self-update from GitHub releases
+    webhook-test    Optional webhook POST (not used by heal)
 
-  VPN:
-    vpn-kill        Install VPN kill-switch (prevents MDM leaks outside VPN)
-    vpn-kill-remove Remove VPN kill-switch
-    vpn-kill-status Check VPN kill-switch status
-
-  Management:
-    config          View/edit persistent settings (~/.unleash.conf)
-    update          Self-update to the latest GitHub release
-    uninstall       Remove all Unleash traces from the system
-    reinstall       Uninstall + reinstall (persist + whitelist + monitor)
-    discord-bot         Start Discord MDM alert bot
-    discord-bot-stop    Stop Discord bot
-    discord-bot-status  Check Discord bot status
+  Removed:
+    apns-block      Removed (old rule dropped TCP 443 to 17.0.0.0/8)
+    init suggest remediate predict telemetry discord-bot tui web
+    simulate upgrade-os vpn-kill test reinstall quarantine demo history
+    fleet-apply
 
   Info:
-    status          Show MDM enrollment status (live and Recovery)
     version         Show version
     help            This message
 
 ALIASES
     rec             recovery
     wipe            wipe-dep
-    st              status
-    ls              status
+    st, ls          status
     fw              firewall
     fw-off          firewall-off
     wl              whitelist
     sv              suppress
     by              bypass
-    mn              monitor
-    mn-install      monitor-install
-    mn-uninstall    monitor-uninstall
-    mn-stop         monitor-stop
-    mn-st           monitor-status
+    mn              monitor (persist)
+    mn-install      persist
+    mn-uninstall    unpersist
     doc             doctor
     up              update
     uni             uninstall
-    rei             reinstall
-    vk              vpn-kill
-    vkr             vpn-kill-remove
-    vks             vpn-kill-status
 
 OPTIONS (after the command: ./unleash apply --unattended)
     --verbose       Show debug messages
@@ -229,14 +190,12 @@ OPTIONS (after the command: ./unleash apply --unattended)
     --allow-weak-password        Allow short passwords
     --create-admin  Create admin user
     --harden        Live-OS harden during apply
+    --remove-all-profiles        Harden: run profiles -D -F (data-loss)
     --i-own-this-device          Intent flag
     --gate          Doctor fail-closed preflight (apply default)
-    --webhook <url> Monitor webhook URL
+    --webhook <url> Webhook URL for webhook-test
     --brief         Brief report
-    --manifest <f>  Fleet manifest file
     --output <f>    Report output file
-    --port <n>      Web server port
-    --interface <if> VPN kill-switch interface
 
 Run without arguments for interactive menu.
 HELP
@@ -303,7 +262,7 @@ cmd_persist() {
 		DATA_ROOT="$data_mount"
 	else
 		if ! is_root; then
-			error_exit "Persistence needs sudo: sudo ./unleash persist"
+			error_exit "ERROR E_NOT_ROOT: persist needs root. LaunchDaemons cannot be installed without sudo. Next: sudo ./unleash persist"
 		fi
 		data_mount=""
 		DATA_ROOT=""
@@ -325,7 +284,7 @@ cmd_unpersist() {
 
 cmd_firewall() {
 	if ! is_root; then
-		error_exit "Firewall needs sudo: sudo ./unleash firewall"
+		error_exit "ERROR E_NOT_ROOT: firewall needs root. pf anchors cannot be installed without sudo. Next: sudo ./unleash firewall"
 	fi
 	local data_mount
 	if is_recovery; then
@@ -341,7 +300,7 @@ cmd_firewall() {
 
 cmd_firewall_broad() {
 	if ! is_root; then
-		error_exit "Firewall needs sudo: sudo ./unleash firewall-broad"
+		error_exit "ERROR E_NOT_ROOT: firewall-broad needs root. pf anchors cannot be installed without sudo. Next: sudo ./unleash firewall-broad"
 	fi
 	local data_mount
 	if is_recovery; then
@@ -357,7 +316,7 @@ cmd_firewall_broad() {
 
 cmd_firewall_off() {
 	if ! is_root; then
-		error_exit "Needs sudo: sudo ./unleash firewall-off"
+		error_exit "ERROR E_NOT_ROOT: firewall-off needs root. pf cannot be flushed without sudo. Next: sudo ./unleash firewall-off"
 	fi
 	local data_mount
 	if is_recovery; then
@@ -372,10 +331,10 @@ cmd_firewall_off() {
 
 cmd_harden() {
 	if ! is_root; then
-		error_exit "Hardening needs sudo: sudo ./unleash harden"
+		error_exit "ERROR E_NOT_ROOT: harden needs root. Live-OS cleanup cannot run without sudo. Next: sudo ./unleash harden"
 	fi
 	if is_recovery; then
-		info "In Recovery — will skip live-OS checks"
+		info "In Recovery — skip live process kill"
 	fi
 	harden_live_os
 }
@@ -407,7 +366,7 @@ cmd_status() {
 
 cmd_check() {
   if ! is_root; then
-    error_exit "Check needs sudo: sudo ./unleash check"
+    error_exit "ERROR E_NOT_ROOT: check needs root. Pre-format probes need sudo. Next: sudo ./unleash check"
   fi
   run_preformat_check
   echo ""
@@ -445,8 +404,6 @@ cmd_monitor() {
 
 cmd_monitor_stop() { stop_monitor; }
 cmd_monitor_status() { monitor_status; }
-cmd_history() { show_history; }
-cmd_history_clear() { clear_history; }
 cmd_doctor() {
 	if [ "${UNLEASH_GATE:-0}" = 1 ]; then
 		if run_doctor --gate; then
@@ -458,30 +415,6 @@ cmd_doctor() {
 		exit 2
 	fi
 	run_doctor
-}
-
-cmd_test() {
-  header "Dry Run Mode"
-  DRY_RUN=true
-  local cmd="${2:-suppress}"
-  case "$cmd" in
-    bypass)    info "Simulating: bypass";   cmd_bypass ;;
-    suppress)  info "Simulating: suppress"; cmd_suppress ;;
-    heal)      info "Simulating: heal";     cmd_heal ;;
-    harden)    info "Simulating: harden";   cmd_harden ;;
-    firewall)  info "Simulating: firewall"; cmd_firewall ;;
-    whitelist) info "Simulating: whitelist"; cmd_whitelist ;;
-    all)
-      info "Simulating all available operations..."
-      info ""
-      DRY_RUN=true suppress_enrollment "/"
-      info ""
-      DRY_RUN=true full_bypass_mode "/"
-      info ""
-      info "Dry-run complete. No changes were made."
-      ;;
-    *) info "Usage: ./unleash test {bypass|suppress|heal|harden|firewall|whitelist|all}" ;;
-  esac
 }
 
 cmd_interactive_recovery() {
@@ -647,6 +580,7 @@ UNLEASH_VOLUME=""
 UNLEASH_CREATE_ADMIN=0
 UNLEASH_FIREWALL_MODE="selective"
 UNLEASH_HARDEN=0
+UNLEASH_REMOVE_ALL_PROFILES=0
 UNLEASH_PERSIST=1
 UNLEASH_RESUME=0
 UNLEASH_INTENT_FLAG=0
@@ -776,6 +710,7 @@ parse_flags() {
 			--allow-weak-password) UNLEASH_ALLOW_WEAK=1; shift ;;
 			--create-admin) UNLEASH_CREATE_ADMIN=1; shift ;;
 			--harden)     UNLEASH_HARDEN=1; shift ;;
+			--remove-all-profiles) UNLEASH_REMOVE_ALL_PROFILES=1; shift ;;
 			--i-own-this-device) UNLEASH_INTENT_FLAG=1; shift ;;
 			--gate)       UNLEASH_GATE=1; shift ;;
 			--help|-h)
@@ -862,9 +797,6 @@ main() {
 		dualboot)         cmd_dualboot ;;
 		status|st|ls)     cmd_status ;;
 		check)            cmd_check ;;
-		history)          cmd_history ;;
-		history-clear)    cmd_history_clear ;;
-		test|dry-run)     cmd_test "$@" ;;
 		monitor|mn)       cmd_monitor "$@" ;;
 		monitor-install|mn-install) cmd_persist ;;
 		monitor-uninstall|mn-uninstall) cmd_unpersist ;;
@@ -872,12 +804,6 @@ main() {
 		monitor-status|mn-st) cmd_monitor_status ;;
 		version|-v|--version) cmd_version ;;
 		doctor|doc)       cmd_doctor ;;
-		init)             cmd_init ;;
-		suggest)          cmd_suggest ;;
-		remediate)        cmd_remediate "${2:-}" ;;
-		predict)          cmd_predict "${2:-}" ;;
-		telemetry)        telemetry_opt_in "${2:-}" ;;
-		demo)             run_demo ;;
 		update|up)        do_self_update ;;
 		uninstall|uni)    do_uninstall ;;
 		report)
@@ -892,35 +818,13 @@ main() {
 			fi
 			;;
 		config)           cmd_config "$@" ;;
-		vpn-kill|vk)      vpn_kill_install "$@" ;;
-		vpn-kill-remove|vkr) vpn_kill_remove ;;
-		vpn-kill-status|vks) vpn_kill_status ;;
 		apns-block|apns-unblock)
 			error_exit "ERROR: apns-block was removed. The old rule dropped TCP 443 to all of 17.0.0.0/8. Next: use firewall (selective) or firewall-broad."
 			;;
-		quarantine)       quarantine_profiles "${2:-/}" ;;
 		webhook-test)     send_webhook_alert "${2:-generic}" "${3:-}" "${4:-Test message}" "${5:-Test Title}" ;;
-		simulate)         run_simulation "${2:-/}" ;;
-		tui|interactive)  launch_tui ;;
-		fleet-apply)      cmd_fleet_apply "$@" ;;
-		upgrade-os)       cmd_upgrade_os ;;
-		web)
-			if [ -n "${UNLEASH_PORT:-}" ]; then
-				cmd_web_server "$UNLEASH_PORT"
-			else
-				cmd_web_server "${2:-8080}"
-			fi
+		init|suggest|remediate|predict|telemetry|demo|history|history-clear|tui|interactive|web|web-stop|simulate|upgrade-os|vpn-kill|vk|vpn-kill-remove|vkr|vpn-kill-status|vks|test|dry-run|reinstall|rei|quarantine|discord-bot|discord-bot-stop|discord-bot-status|fleet-apply)
+			_cmd_removed "$cmd"
 			;;
-		web-stop)         cmd_web_stop ;;
-		reinstall|rei)
-			do_uninstall
-			cmd_persist
-			cmd_firewall
-			success "Reinstall complete"
-			;;
-		discord-bot)      cmd_discord_bot_install "${2:-}" "${3:-}" ;;
-		discord-bot-stop) cmd_discord_bot_stop ;;
-		discord-bot-status) cmd_discord_bot_status ;;
 		help|-h|--help)   show_help; exit 0 ;;
 		*)
 			echo -e "${RED}Unknown: $cmd${NC}" >&2
