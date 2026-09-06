@@ -3,10 +3,14 @@
 setup() {
   load '../lib/colors.sh'
   load '../lib/result.sh'
+  load '../lib/config.sh'
   load '../lib/detect.sh'
   load '../lib/backup.sh'
   load '../lib/pipeline.sh'
+  load '../lib/doctor.sh'
   DATA_ROOT=$(mktemp -d)
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  LIB_DIR="$SCRIPT_DIR/lib"
   UNLEASH_UNATTENDED=0
   JOURNAL_RUN=""
   RESULT_STATUS=ok
@@ -253,7 +257,6 @@ teardown() {
 }
 
 @test "pipeline_run E_VOLUME_RO exits 2 with no BEGIN" {
-  load '../lib/config.sh'
   load '../lib/validate.sh'
   load '../lib/suppress.sh'
   load '../lib/heal.sh'
@@ -263,6 +266,8 @@ teardown() {
   }
   UNLEASH_VOLUME="$DATA_ROOT"
   mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  mkdir -p "$DATA_ROOT/Library/Unleash/state"
+  printf 'owned=1\nts=2026-09-06T00:00:00Z\nvolume_uuid=\n' > "$DATA_ROOT/Library/Unleash/state/intent"
   UNLEASH_UNATTENDED=1
   UNLEASH_CREATE_ADMIN=0
   run pipeline_run
@@ -271,4 +276,57 @@ teardown() {
   if [ -f "$DATA_ROOT/Library/Unleash/state/journal" ]; then
     ! grep -q 'op=BEGIN' "$DATA_ROOT/Library/Unleash/state/journal"
   fi
+}
+
+@test "apply dry-run creates zero files" {
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  load '../lib/firewall.sh'
+  load '../lib/ma_detect.sh'
+  mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  mkdir -p "$DATA_ROOT/private/etc"
+  mkdir -p "$DATA_ROOT/private/var/db/ConfigurationProfiles/Settings"
+  mkdir -p "$DATA_ROOT/private/var/db/com.apple.xpc.launchd"
+  mkdir -p "$DATA_ROOT/Library/Unleash/state"
+  printf 'owned=1\nts=2026-09-06T00:00:00Z\nvolume_uuid=\n' > "$DATA_ROOT/Library/Unleash/state/intent"
+  UNLEASH_VOLUME="$DATA_ROOT"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  UNLEASH_DRY_RUN=1
+  DRY_RUN=true
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  before=$(find "$DATA_ROOT" | sort)
+  run cmd_apply
+  after=$(find "$DATA_ROOT" | sort)
+  [ "$status" -eq 0 ]
+  [ "$before" = "$after" ]
+}
+
+@test "apply --json spacey volume is json.loads-able" {
+  if ! command -v python3 >/dev/null 2>&1; then
+    skip "python3 not available"
+  fi
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  base=$(mktemp -d)
+  vol="$base/Macintosh HD - Data"
+  mkdir -p "$vol/private/var/db/dslocal/nodes/Default"
+  UNLEASH_VOLUME="$vol"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  UNLEASH_JSON=1
+  run cmd_apply
+  rm -rf "$base"
+  [ "$status" -eq 2 ]
+  json_line=$(printf '%s\n' "$output" | grep '^{' | tail -1)
+  printf '%s\n' "$json_line" | python3 -c '
+import json, sys
+obj = json.loads(sys.stdin.read())
+assert "Macintosh HD - Data" in obj["volume"]
+assert obj["exit"] == 2
+assert obj["reason"] == "E_INTENT_MISSING"
+assert "next" in obj
+'
 }

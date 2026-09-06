@@ -1,3 +1,19 @@
+# Process patterns from data/mdm-agents.tsv only (no ad-hoc Apple pkill).
+_status_agent_re() {
+	local tsv re=""
+	if type _mdm_agents_tsv >/dev/null 2>&1; then
+		tsv=$(_mdm_agents_tsv) || tsv=""
+	elif [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/data/mdm-agents.tsv" ]; then
+		tsv="$SCRIPT_DIR/data/mdm-agents.tsv"
+	fi
+	if [ -n "$tsv" ] && [ -f "$tsv" ]; then
+		re=$(awk -F '\t' 'BEGIN{ORS=""} /^#/ {next} NF>=2 { if (n) printf "|"; printf "%s", $2; n=1 }' "$tsv")
+	fi
+	if [ -z "$re" ]; then
+		re="jamf|kandji|mosyle|intune|addigy|airwatch"
+	fi
+	printf '%s' "$re"
+}
 
 check_mdm_status() {
 	local data_mount="$1"
@@ -109,10 +125,6 @@ deep_status() {
 	if command -v profiles &>/dev/null; then
 		enroll_raw=$(sudo profiles status -type enrollment 2>/dev/null || echo "  Cannot determine")
 		echo "$enroll_raw"
-		# Terminate transient query processes spawned by profiles query so they don't linger
-		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
-		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
-		sleep 0.2
 	fi
 	echo ""
 
@@ -160,9 +172,10 @@ deep_status() {
 	echo ""
 
 	step "Running MDM Processes"
-	local procs third_party
+	local procs third_party agent_re
+	agent_re=$(_status_agent_re)
 	procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || true)
-	third_party=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep || true)
+	third_party=$(ps aux 2>/dev/null | grep -iE "$agent_re" | grep -v grep || true)
 	if [ -n "$third_party" ]; then
 		warn "Active third-party MDM agent running:"
 		echo "$third_party" | awk '{print "  " $11 " (PID " $2 ")"}'
@@ -266,8 +279,6 @@ deep_status_json() {
 	local enroll_state="unknown"
 	if command -v profiles &>/dev/null; then
 		enroll_state=$(sudo profiles status -type enrollment 2>/dev/null | head -1 | xargs || echo "unknown")
-		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
-		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
 	fi
 	enroll_state="${enroll_state//\"/\\\"}"
 	json="${json}  \"enrollment_state\": \"${enroll_state}\",\n"
@@ -279,7 +290,9 @@ deep_status_json() {
 	json="${json}  \"mdm_certificates\": $mdm_certs,\n"
 
 	local running_procs=0
-	running_procs=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+	local agent_re
+	agent_re=$(_status_agent_re)
+	running_procs=$(ps aux 2>/dev/null | grep -iE "$agent_re" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
 	if [ "$profile_count" -gt 0 ] || echo "$enroll_state" | grep -qi "Yes"; then
 		local sys_procs
 		sys_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
@@ -303,4 +316,30 @@ deep_status_json() {
 
 	json="${json}}"
 	echo -e "$json"
+}
+
+# Live and Recovery. Dirty probes → exit 3 (read-only; 4 is mutate+verify fail).
+run_status() {
+	if type run_probes >/dev/null 2>&1; then
+		run_probes
+	fi
+	if [ "${UNLEASH_JSON:-0}" = 1 ] || [ "${1:-}" = "--json" ]; then
+		local code=0
+		local next=""
+		if [ "${RESULT_STATUS:-ok}" = "fail" ]; then
+			code=3
+			next="re-run: unleash apply --unattended"
+		fi
+		if type status_emit_json >/dev/null 2>&1; then
+			status_emit_json "$code" "${DATA_ROOT:-}" "$next"
+		else
+			deep_status_json
+		fi
+		return "$code"
+	fi
+	check_mdm_status "${DATA_ROOT:-/}"
+	if [ "${RESULT_STATUS:-ok}" = "fail" ]; then
+		return 3
+	fi
+	return 0
 }

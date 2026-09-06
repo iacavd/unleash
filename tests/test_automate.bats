@@ -15,10 +15,12 @@ setup() {
   load '../lib/firewall.sh'
   load '../lib/ma_detect.sh'
   load '../lib/automate.sh'
+  load '../lib/doctor.sh'
 
   VERSION="2.0.0"
   SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   ROOT="$SCRIPT_DIR"
+  LIB_DIR="$SCRIPT_DIR/lib"
   TEST_DIR=$(mktemp -d)
   mkdir -p "$TEST_DIR/private/etc"
   mkdir -p "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings"

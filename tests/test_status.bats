@@ -32,3 +32,19 @@ teardown() {
   run deep_status 2>/dev/null || true
   echo "$output" | grep -q "}"
 }
+
+@test "status.sh does not pkill" {
+  ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  if grep -nE '(^|[[:space:]])pkill([[:space:]]|$)' "$ROOT/lib/status.sh"; then
+    echo "status.sh must not pkill" >&2
+    return 1
+  fi
+}
+
+@test "check_mdm_status works with a fixture volume (live or Recovery path)" {
+  echo "0.0.0.0 iprofiles.apple.com" > "$TEST_DIR/private/etc/hosts"
+  echo "0.0.0.0 deviceenrollment.apple.com" >> "$TEST_DIR/private/etc/hosts"
+  echo "0.0.0.0 mdmenrollment.apple.com" >> "$TEST_DIR/private/etc/hosts"
+  run check_mdm_status "$TEST_DIR"
+  [ "$status" -eq 0 ]
+}

@@ -1,3 +1,11 @@
+# curl %{http_code} 000 means no HTTP response. That is not reachable.
+http_code_reachable() {
+  case "${1:-}" in
+    ''|000) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 run_preformat_check() {
   header "Pre-Format MDM Assessment"
 
@@ -33,7 +41,8 @@ run_preformat_check() {
     local enroll_check
     enroll_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
       "https://deviceenrollment.apple.com/" 2>/dev/null || echo "000")
-    if [ "$enroll_check" = "000" ] || [ "$enroll_check" = "200" ]; then
+    # HTTP 000 is a failed transport, not a success. Do not treat it as reachable.
+    if http_code_reachable "$enroll_check"; then
       echo -e "  ${YEL}deviceenrollment.apple.com reachable${NC}"
     else
       echo -e "  ${GRN}deviceenrollment.apple.com blocked (code $enroll_check)${NC}"

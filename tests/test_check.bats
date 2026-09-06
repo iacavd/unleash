@@ -19,3 +19,14 @@ setup() {
   run run_preformat_check 2>/dev/null || true
   echo "$output" | grep -qiE "safe|mdm"
 }
+
+@test "HTTP 000 is not reachable" {
+  run http_code_reachable 000
+  [ "$status" -ne 0 ]
+  run http_code_reachable ""
+  [ "$status" -ne 0 ]
+  run http_code_reachable 200
+  [ "$status" -eq 0 ]
+  run http_code_reachable 403
+  [ "$status" -eq 0 ]
+}

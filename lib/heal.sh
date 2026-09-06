@@ -6,98 +6,29 @@ PERSIST_LABEL="com.unleash.heal"
 heal_suppress() {
 	local data_mount="$1"
 	[ -z "$data_mount" ] && data_mount=""
+	DATA_ROOT="$data_mount"
 
 	step "Checking current MDM suppression state..."
-	local cfg="${data_mount}/private/var/db/ConfigurationProfiles/Settings"
-	local hosts="${data_mount}/private/etc/hosts"
-	local ldp="${data_mount}/private/var/db/com.apple.xpc.launchd/disabled.plist"
-
 	local needs_heal=false
 
-	# 1. DEP Activation Record Check
-	if [ -f "$cfg/.cloudConfigRecordFound" ] || [ -f "$cfg/.cloudConfigHasActivationRecord" ]; then
-		local org="" mdm_host=""
-		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-			org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
-				| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
-			mdm_host=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
-				| grep -ioE 'https?://[a-z0-9._-]+' | sed -E 's#https?://##' \
-				| sort -u | grep -viE '(^|\.)apple\.com$' | head -1 || true)
-		fi
-		if [ -n "$org" ] || [ -n "$mdm_host" ] || ! plutil -p "$cfg/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
-			warn "DEP activation record found at $cfg"
-			[ -n "$org" ] && warn "  Organization: $org"
-			[ -n "$mdm_host" ] && warn "  MDM Server:   $mdm_host"
-			needs_heal=true
-		else
-			info "DEP cloud check blocked (CloudConfigFetchError logged — domain block active)"
-		fi
-	else
-		info "DEP activation record markers are clean"
-	fi
-
-	# 2. Hosts Block & Live DNS Resolution Check
-	local hosts_blocked=false
-	if [ -f "$hosts" ] && grep -q "iprofiles.apple.com" "$hosts" 2>/dev/null; then
-		hosts_blocked=true
-	fi
-
-	# Perform actual local DNS resolution check if on booted system
-	local live_resolved=false
-	if [ -z "$data_mount" ] || [ "$data_mount" = "/" ]; then
-		local resolved_ip=""
-		resolved_ip=$(dscacheutil -q host -a name iprofiles.apple.com 2>/dev/null | awk '/ip_address:/{print $2; exit}' || true)
-		if [ -z "$resolved_ip" ] && command -v host >/dev/null 2>&1; then
-			resolved_ip=$(host -W 1 iprofiles.apple.com 2>/dev/null | awk '/has address/{print $NF; exit}' || true)
-		fi
-
-		if [ -n "$resolved_ip" ] && [[ "$resolved_ip" != "0.0.0.0" && "$resolved_ip" != "127.0.0.1" ]]; then
-			live_resolved=true
-		fi
-	fi
-
-	if [ "$hosts_blocked" = true ] && [ "$live_resolved" = false ]; then
-		info "Domain block active in $hosts (and resolving to sinkhole 0.0.0.0)"
-	elif [ "$hosts_blocked" = true ] && [ "$live_resolved" = true ]; then
-		warn "Hosts contains block rules, but live DNS still resolves iprofiles.apple.com -> $resolved_ip (DNS-over-HTTPS or mDNSResponder cache active)"
-		needs_heal=true
-	elif [ "$hosts_blocked" = false ]; then
-		warn "Domain block missing in $hosts (Apple MDM servers not redirected to 0.0.0.0)"
-		[ "$live_resolved" = true ] && warn "  Live check: iprofiles.apple.com currently resolves to active Apple IP ($resolved_ip)"
+	probe_dep
+	if [ "$RESULT_STATUS" = "fail" ]; then
+		warn "${RESULT_MSG:-DEP markers dirty}"
 		needs_heal=true
 	fi
-
-	# 3. LaunchDaemons Disabled Overrides Check
-	local all_daemons=(
-		"com.apple.ManagedClient"
-		"com.apple.ManagedClient.enroll"
-		"com.apple.ManagedClient.cloudConfiguration"
-		"com.apple.ManagedClientAgent"
-		"com.apple.ManagedClientAgent.agent"
-		"com.apple.mdmclient"
-		"com.apple.mdmclient.daemon"
-		"com.apple.mdmclient.daemon.runatboot"
-		"com.apple.mdmclient.agent"
-		"com.apple.activationd"
-	)
-	if [ -f "$ldp" ]; then
-		local missing_daemons=()
-		for label in "${all_daemons[@]}"; do
-			if ! $PB -c "Print :$label" "$ldp" 2>/dev/null | grep -q "true"; then
-				missing_daemons+=("$label")
-			fi
-		done
-		if [ "${#missing_daemons[@]}" -gt 0 ]; then
-			warn "${#missing_daemons[@]} enrollment daemon(s) not disabled in $ldp:"
-			for d in "${missing_daemons[@]}"; do
-				warn "  - $d (enabled)"
-			done
-			needs_heal=true
-		else
-			info "All ${#all_daemons[@]} enrollment daemons disabled"
-		fi
-	else
-		warn "Launchd disabled overrides plist missing ($ldp)"
+	probe_hosts
+	if [ "$RESULT_STATUS" = "fail" ]; then
+		warn "${RESULT_MSG:-hosts sinkhole missing}"
+		needs_heal=true
+	fi
+	probe_dns
+	if [ "$RESULT_STATUS" = "fail" ]; then
+		warn "${RESULT_MSG:-live DNS still Apple 17/8}"
+		needs_heal=true
+	fi
+	probe_daemons
+	if [ "$RESULT_STATUS" = "fail" ]; then
+		warn "${RESULT_MSG:-launchd overrides missing}"
 		needs_heal=true
 	fi
 
@@ -420,3 +351,423 @@ remove_persist_launchdaemon() {
 		rm -rf "$unleash_dir"
 	fi
 }
+
+# --- Probe table (heal --unattended verify + status --json). Never pkill. ---
+
+PROBE_LINES="${PROBE_LINES:-}"
+
+_probe_is_live_os() {
+	if type is_recovery >/dev/null 2>&1 && is_recovery; then
+		return 1
+	fi
+	[ -z "${DATA_ROOT:-}" ] || [ "$DATA_ROOT" = "/" ]
+}
+
+_probe_daemon_labels() {
+	printf '%s\n' \
+		com.apple.ManagedClient \
+		com.apple.ManagedClient.enroll \
+		com.apple.ManagedClient.cloudConfiguration \
+		com.apple.ManagedClientAgent \
+		com.apple.ManagedClientAgent.agent \
+		com.apple.mdmclient \
+		com.apple.mdmclient.daemon \
+		com.apple.mdmclient.daemon.runatboot \
+		com.apple.mdmclient.agent \
+		com.apple.activationd
+}
+
+_mdm_agents_tsv() {
+	if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/data/mdm-agents.tsv" ]; then
+		printf '%s\n' "$SCRIPT_DIR/data/mdm-agents.tsv"
+		return 0
+	fi
+	local root=""
+	if type unleash_root >/dev/null 2>&1; then
+		root=$(unleash_root)
+	else
+		root="${DATA_ROOT-}/Library/Unleash"
+	fi
+	if [ -f "$root/data/mdm-agents.tsv" ]; then
+		printf '%s\n' "$root/data/mdm-agents.tsv"
+		return 0
+	fi
+	return 1
+}
+
+_probe_cloudconfig_org() {
+	local f="$1"
+	local org=""
+	if [ ! -f "$f" ]; then
+		printf ''
+		return 0
+	fi
+	if command -v plutil >/dev/null 2>&1; then
+		org=$(plutil -convert xml1 -o - "$f" 2>/dev/null \
+			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+	else
+		org=$(grep -A1 -i OrganizationName "$f" 2>/dev/null | tail -1 \
+			| sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+	fi
+	case "$org" in
+		*"<"*) org="" ;;
+	esac
+	printf '%s' "$org"
+}
+
+_probe_cloudconfig_fetch_error() {
+	local f="$1"
+	[ -f "$f" ] || return 1
+	if command -v plutil >/dev/null 2>&1; then
+		plutil -p "$f" 2>/dev/null | grep -q "CloudConfigFetchError" && return 0
+	fi
+	grep -q "CloudConfigFetchError" "$f" 2>/dev/null
+}
+
+# 17.0.0.0/8 except the sinkhole 0.0.0.0 (spec: fail iff in 17/8 AND not 0.0.0.0).
+_probe_ipv4_apple_17() {
+	local ip="$1"
+	[ "$ip" = "0.0.0.0" ] && return 1
+	case "$ip" in
+		17.*) return 0 ;;
+	esac
+	return 1
+}
+
+_probe_hosts_domain() {
+	local hosts="$1"
+	local domain="$2"
+	local esc
+	esc=$(printf '%s' "$domain" | sed 's/\./\\./g')
+	grep -Eq "^[[:space:]]*(0\\.0\\.0\\.0|::)[[:space:]]+${esc}([[:space:]]|$)" "$hosts" 2>/dev/null
+}
+
+_probe_exists_glob() {
+	local pattern="$1"
+	local dir base
+	dir=$(dirname "$pattern")
+	base=$(basename "$pattern")
+	[ -d "$dir" ] || return 1
+	case "$base" in
+		*[\*\?]*)
+			# glob only the basename so spaces in dirname stay intact
+			for f in "$dir"/$base; do
+				[ -e "$f" ] && return 0
+			done
+			return 1
+			;;
+		*)
+			[ -e "$dir/$base" ]
+			;;
+	esac
+}
+
+_probe_record() {
+	PROBE_LINES="${PROBE_LINES}${1}"$'\t'"${2}"$'\t'"${3:-}"$'\n'
+}
+
+# Convert a fail into skip when the mutate step already recorded skip-class.
+_probe_fail_is_skip_class() {
+	local name="$1"
+	case "$name" in
+		dep)
+			[ "${PIPELINE_DEGRADED:-0}" = 1 ] && return 0
+			;;
+		persist)
+			case ",${PIPELINE_SKIP_REASONS:-}," in
+				*,E_PERSIST_PATH,*) return 0 ;;
+			esac
+			;;
+		pf)
+			case ",${PIPELINE_SKIP_REASONS:-}," in
+				*,E_PFCTL_FAIL,*|*,E_DNS_FAIL,*|*,S_PF_RECOVERY,*) return 0 ;;
+			esac
+			;;
+	esac
+	return 1
+}
+
+probe_dep() {
+	local cfg="${DATA_ROOT}/private/var/db/ConfigurationProfiles/Settings"
+	local found="$cfg/.cloudConfigRecordFound"
+	local notfound="$cfg/.cloudConfigRecordNotFound"
+	local org=""
+
+	if [ ! -f "$notfound" ]; then
+		result_fail E_VERIFY_FAIL heal dep ".cloudConfigRecordNotFound missing at $cfg"
+		return 0
+	fi
+	if [ ! -f "$found" ]; then
+		result_ok heal dep "DEP markers clean"
+		return 0
+	fi
+	org=$(_probe_cloudconfig_org "$found")
+	if [ -n "$org" ]; then
+		result_fail E_VERIFY_FAIL heal dep "DEP OrganizationName still present: $org"
+		return 0
+	fi
+	if _probe_cloudconfig_fetch_error "$found"; then
+		result_ok heal dep "DEP CloudConfigFetchError only"
+		return 0
+	fi
+	result_fail E_VERIFY_FAIL heal dep ".cloudConfigRecordFound present without CloudConfigFetchError"
+	return 0
+}
+
+probe_hosts() {
+	local hosts="${DATA_ROOT}/private/etc/hosts"
+	local d
+	if [ ! -f "$hosts" ]; then
+		result_fail E_VERIFY_FAIL heal hosts "hosts file missing: $hosts"
+		return 0
+	fi
+	for d in iprofiles.apple.com deviceenrollment.apple.com mdmenrollment.apple.com; do
+		if ! _probe_hosts_domain "$hosts" "$d"; then
+			result_fail E_VERIFY_FAIL heal hosts "$d not mapped to 0.0.0.0/:: in $hosts"
+			return 0
+		fi
+	done
+	result_ok heal hosts "MDM domains sinkholed in Data-volume hosts"
+	return 0
+}
+
+probe_dns() {
+	local dsc="${DSCACHEUTIL:-/usr/bin/dscacheutil}"
+	local out="" key val ip
+
+	if ! _probe_is_live_os; then
+		result_skip S_NO_DSCACHEUTIL heal dns "live DNS skipped (Recovery or fixture)"
+		return 0
+	fi
+	if [ ! -x "$dsc" ]; then
+		result_skip S_NO_DSCACHEUTIL heal dns "dscacheutil not available"
+		return 0
+	fi
+	out=$("$dsc" -q host -a name iprofiles.apple.com 2>/dev/null || true)
+	while IFS= read -r line || [ -n "$line" ]; do
+		key="${line%%:*}"
+		val="${line#*:}"
+		val="${val#"${val%%[![:space:]]*}"}"
+		[ "$key" = "ip_address" ] || continue
+		ip="$val"
+		if _probe_ipv4_apple_17 "$ip"; then
+			result_fail E_VERIFY_FAIL heal dns "iprofiles.apple.com resolves to Apple 17/8 $ip"
+			return 0
+		fi
+	done <<EOF
+$out
+EOF
+	result_ok heal dns "live DNS not Apple 17/8"
+	return 0
+}
+
+probe_daemons() {
+	local ldp="${DATA_ROOT}/private/var/db/com.apple.xpc.launchd/disabled.plist"
+	local pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+	local label printed missing=0
+
+	if [ ! -f "$ldp" ]; then
+		result_fail E_VERIFY_FAIL heal daemons "disabled.plist missing: $ldp"
+		return 0
+	fi
+	if [ ! -x "$pb" ] && [ -x /usr/libexec/PlistBuddy ]; then
+		pb=/usr/libexec/PlistBuddy
+	fi
+	if [ ! -x "$pb" ]; then
+		result_fail E_VERIFY_FAIL heal daemons "PlistBuddy not available"
+		return 0
+	fi
+	while IFS= read -r label || [ -n "$label" ]; do
+		[ -n "$label" ] || continue
+		printed=$("$pb" -c "Print :$label" "$ldp" 2>/dev/null || true)
+		if ! printf '%s\n' "$printed" | grep -q "true"; then
+			missing=$((missing + 1))
+		fi
+	done <<EOF
+$(_probe_daemon_labels)
+EOF
+	if [ "$missing" -gt 0 ]; then
+		result_fail E_VERIFY_FAIL heal daemons "$missing enrollment label(s) not Print true"
+		return 0
+	fi
+	result_ok heal daemons "10 launchd overrides Print true"
+	return 0
+}
+
+probe_persist() {
+	if persist_probe_ok; then
+		result_ok heal persist "binary and plist live-path"
+		return 0
+	fi
+	result_fail E_VERIFY_FAIL heal persist "persist binary missing or plist not live-path"
+	return 0
+}
+
+probe_pf() {
+	local anchor="${DATA_ROOT}/private/etc/pf.anchors/com.unleash/mdm"
+	local pfctl="${PFCTL:-/sbin/pfctl}"
+	local rules=""
+
+	if [ "${UNLEASH_FIREWALL_MODE:-selective}" = "off" ]; then
+		result_skip S_ALREADY_OK heal pf "firewall-mode=off"
+		return 0
+	fi
+	if [ ! -s "$anchor" ]; then
+		result_fail E_VERIFY_FAIL heal pf "pf anchor missing or empty: $anchor"
+		return 0
+	fi
+	if ! _probe_is_live_os; then
+		# Recovery: files written, do not pfctl -f the target conf.
+		result_skip S_PF_RECOVERY heal pf "anchor present; kernel load skipped"
+		return 0
+	fi
+	if [ ! -x "$pfctl" ]; then
+		result_fail E_VERIFY_FAIL heal pf "pfctl not available"
+		return 0
+	fi
+	rules=$("$pfctl" -a com.unleash/mdm -s rules 2>/dev/null || true)
+	if ! printf '%s\n' "$rules" | grep -q "block"; then
+		result_fail E_VERIFY_FAIL heal pf "pfctl com.unleash/mdm rules lack block"
+		return 0
+	fi
+	result_ok heal pf "anchor loaded with block"
+	return 0
+}
+
+probe_processes() {
+	local profiles="${PROFILES:-/usr/sbin/profiles}"
+	local tsv="" id pat bins glob tok rest enroll=""
+	local root="${DATA_ROOT:-}"
+
+	if ! _probe_is_live_os; then
+		result_skip S_NO_PROFILES_CMD heal processes "process probe is live-OS only"
+		return 0
+	fi
+
+	tsv=$(_mdm_agents_tsv) || tsv=""
+	if [ -n "$tsv" ] && [ -f "$tsv" ]; then
+		while IFS=$'\t' read -r id pat bins glob || [ -n "$id" ]; do
+			case "$id" in
+				''|\#*) continue ;;
+			esac
+			[ -n "$pat" ] || continue
+			if command -v ps >/dev/null 2>&1; then
+				if ps aux 2>/dev/null | grep -i "$pat" | grep -v grep | grep -v unleash | grep -q .; then
+					result_fail E_VERIFY_FAIL heal processes "third-party agent running: $id"
+					return 0
+				fi
+			fi
+			rest="$bins"
+			while [ -n "$rest" ]; do
+				case "$rest" in
+					*'|'*) tok="${rest%%|*}"; rest="${rest#*|}" ;;
+					*) tok="$rest"; rest="" ;;
+				esac
+				[ -n "$tok" ] || continue
+				if _probe_exists_glob "${root}${tok}"; then
+					result_fail E_VERIFY_FAIL heal processes "third-party binary present: $tok"
+					return 0
+				fi
+			done
+			if [ -n "$glob" ] && _probe_exists_glob "${root}${glob}"; then
+				result_fail E_VERIFY_FAIL heal processes "third-party launchd present: $glob"
+				return 0
+			fi
+		done < "$tsv"
+	fi
+
+	if [ ! -x "$profiles" ]; then
+		result_skip S_NO_PROFILES_CMD heal processes "profiles command missing"
+		return 0
+	fi
+	enroll=$("$profiles" status -type enrollment 2>/dev/null || true)
+	if printf '%s\n' "$enroll" | grep -qiE '(Enrolled via DEP|MDM enrollment):[[:space:]]*Yes'; then
+		if command -v ps >/dev/null 2>&1; then
+			if ps aux 2>/dev/null | grep -iE '(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)' | grep -qv grep; then
+				result_fail E_VERIFY_FAIL heal processes "Apple mdmclient running while enrollment Yes"
+				return 0
+			fi
+		fi
+	fi
+	result_ok heal processes "no third-party agents; Apple helpers idle"
+	return 0
+}
+
+# Always return 0 (D20). RESULT_STATUS=fail if a required probe failed.
+run_probes() {
+	PROBE_LINES=""
+	RESULT_STATUS=ok
+	RESULT_REASON=""
+	RESULT_MSG=""
+	local failed=0
+	local fail_reason=""
+	local fail_msg=""
+	local name fn rec_status rec_reason
+
+	for name in dep hosts dns daemons persist pf processes; do
+		fn="probe_${name}"
+		RESULT_STATUS=ok
+		RESULT_REASON=""
+		RESULT_MSG=""
+		"$fn"
+		rec_status="$RESULT_STATUS"
+		rec_reason="${RESULT_REASON:-}"
+		if [ "$rec_status" = "fail" ] && _probe_fail_is_skip_class "$name"; then
+			rec_status=skip
+			[ -n "$rec_reason" ] || rec_reason=S_ALREADY_OK
+		fi
+		case "$rec_status" in
+			ok)
+				_probe_record "$name" ok ""
+				;;
+			skip)
+				_probe_record "$name" skip "$rec_reason"
+				;;
+			fail)
+				_probe_record "$name" fail "${rec_reason:-E_VERIFY_FAIL}"
+				failed=1
+				fail_reason="${rec_reason:-E_VERIFY_FAIL}"
+				fail_msg="${RESULT_MSG:-probe $name failed}"
+				;;
+		esac
+	done
+
+	if [ "$failed" -eq 1 ]; then
+		result_fail "${fail_reason:-E_VERIFY_FAIL}" heal probes "$fail_msg"
+		return 0
+	fi
+	result_ok heal probes "required probes passed"
+	return 0
+}
+
+status_emit_json() {
+	local exit_code="${1:-0}"
+	local volume="${2:-${DATA_ROOT:-}}"
+	local next="${3:-${PIPELINE_NEXT:-}}"
+	local ok_json="true"
+	local probes_json="" first=1
+	local name st reason
+	local reason_e msg_e next_e volume_e name_e st_e rs_e
+
+	if [ "$RESULT_STATUS" = "fail" ]; then
+		ok_json="false"
+	fi
+	while IFS=$'\t' read -r name st reason || [ -n "$name" ]; do
+		[ -n "$name" ] || continue
+		[ "$first" = 1 ] || probes_json="${probes_json},"
+		first=0
+		name_e=$(json_escape "$name")
+		st_e=$(json_escape "$st")
+		rs_e=$(json_escape "$reason")
+		probes_json="${probes_json}{\"name\":\"${name_e}\",\"status\":\"${st_e}\",\"reason\":\"${rs_e}\"}"
+	done <<EOF
+${PROBE_LINES}
+EOF
+	reason_e=$(json_escape "${RESULT_REASON:-}")
+	msg_e=$(json_escape "${RESULT_MSG:-}")
+	next_e=$(json_escape "$next")
+	volume_e=$(json_escape "$volume")
+	printf '{"ok":%s,"exit":%s,"reason":"%s","message":"%s","next":"%s","volume":"%s","probes":[%s]}\n' \
+		"$ok_json" "$exit_code" "$reason_e" "$msg_e" "$next_e" "$volume_e" "$probes_json"
+}
+

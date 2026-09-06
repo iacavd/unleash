@@ -149,6 +149,32 @@ teardown() {
   [ "$RESULT_REASON" = "E_PERSIST_PATH" ]
 }
 
+@test "probe_hosts requires 0.0.0.0 or :: for three MDM domains" {
+  DATA_ROOT="$TEST_DIR"
+  : > "$TEST_DIR/private/etc/hosts"
+  probe_hosts
+  [ "$RESULT_STATUS" = "fail" ]
+  printf '0.0.0.0 iprofiles.apple.com\n0.0.0.0 deviceenrollment.apple.com\n0.0.0.0 mdmenrollment.apple.com\n' > "$TEST_DIR/private/etc/hosts"
+  probe_hosts
+  [ "$RESULT_STATUS" = "ok" ]
+}
+
+@test "probe_dep requires cloudConfigRecordNotFound" {
+  DATA_ROOT="$TEST_DIR"
+  probe_dep
+  [ "$RESULT_STATUS" = "fail" ]
+  touch "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordNotFound"
+  probe_dep
+  [ "$RESULT_STATUS" = "ok" ]
+}
+
+@test "probe_dns skips off live OS with S_NO_DSCACHEUTIL" {
+  DATA_ROOT="$TEST_DIR"
+  probe_dns
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_NO_DSCACHEUTIL" ]
+}
+
 @test "persist not-writable dest is status 1 E_PERSIST_PATH" {
   USB=$(mktemp -d)
   mkdir -p "$USB/lib"

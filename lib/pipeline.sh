@@ -398,17 +398,7 @@ _pipeline_need_root() {
 
 _pipeline_preflight() {
 	local du pb
-	du="${DISKUTIL:-/usr/sbin/diskutil}"
-	pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
-	if [ ! -x "$du" ] && ! command -v diskutil >/dev/null 2>&1; then
-		result_fail E_PREFLIGHT_TOOLS pipeline preflight "diskutil not available"
-		return 1
-	fi
-	if [ ! -x "$pb" ] && [ ! -x /usr/libexec/PlistBuddy ]; then
-		result_fail E_PREFLIGHT_TOOLS pipeline preflight "PlistBuddy not available"
-		return 1
-	fi
-
+	# Creds before doctor so E_CREDS_REQUIRED / E_DEFAULT_PASSWORD win over E_NOT_ROOT.
 	if [ "${UNLEASH_CREATE_ADMIN:-0}" = 1 ]; then
 		if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
 			if ! require_create_admin_creds; then
@@ -423,8 +413,24 @@ _pipeline_preflight() {
 		fi
 	fi
 
-	if ! _pipeline_need_root; then
-		return 1
+	if type run_doctor >/dev/null 2>&1; then
+		if ! run_doctor --gate; then
+			return 1
+		fi
+	else
+		du="${DISKUTIL:-/usr/sbin/diskutil}"
+		pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+		if [ ! -x "$du" ] && ! command -v diskutil >/dev/null 2>&1; then
+			result_fail E_PREFLIGHT_TOOLS pipeline preflight "diskutil not available"
+			return 1
+		fi
+		if [ ! -x "$pb" ] && [ ! -x /usr/libexec/PlistBuddy ]; then
+			result_fail E_PREFLIGHT_TOOLS pipeline preflight "PlistBuddy not available"
+			return 1
+		fi
+		if ! _pipeline_need_root; then
+			return 1
+		fi
 	fi
 	return 0
 }
@@ -474,7 +480,7 @@ _pipeline_exit() {
 		log ERROR pipeline exit "ERROR ${reason}: ${msg}. Next: ${PIPELINE_NEXT}"
 	fi
 	if [ "${UNLEASH_JSON:-0}" = 1 ]; then
-		emit_json "$code" "$PIPELINE_NEXT" "$PIPELINE_VOLUME"
+		emit_json "$code" "$PIPELINE_NEXT" "${PIPELINE_VOLUME:-${UNLEASH_VOLUME:-}}"
 	fi
 	pipeline_lock_release || true
 	exit "$code"
@@ -705,36 +711,31 @@ _pipeline_step_harden() {
 }
 
 _pipeline_probe_hosts() {
-	local hosts="${DATA_ROOT}/private/etc/hosts"
-	[ -f "$hosts" ] || return 1
-	grep -q "iprofiles.apple.com" "$hosts" || return 1
-	grep -q "deviceenrollment.apple.com" "$hosts" || return 1
-	return 0
+	probe_hosts
+	[ "$RESULT_STATUS" = "ok" ] || [ "$RESULT_STATUS" = "skip" ]
 }
 
 _pipeline_probe_dep() {
-	local cfg="${DATA_ROOT}/private/var/db/ConfigurationProfiles/Settings"
-	[ ! -f "$cfg/.cloudConfigRecordFound" ]
+	probe_dep
+	[ "$RESULT_STATUS" = "ok" ] || [ "$RESULT_STATUS" = "skip" ]
 }
 
 _pipeline_probe_plist() {
-	local ldp="${DATA_ROOT}/private/var/db/com.apple.xpc.launchd/disabled.plist"
-	local pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
-	[ -f "$ldp" ] || return 1
-	"$pb" -c "Print :com.apple.ManagedClient.enroll" "$ldp" 2>/dev/null | grep -q true
+	probe_daemons
+	[ "$RESULT_STATUS" = "ok" ] || [ "$RESULT_STATUS" = "skip" ]
 }
 
 _pipeline_probe_pf() {
-	local f="${DATA_ROOT}/private/etc/pf.anchors/com.unleash/mdm"
-	[ -s "$f" ]
+	probe_pf
+	[ "$RESULT_STATUS" = "ok" ] || [ "$RESULT_STATUS" = "skip" ]
 }
 
 _pipeline_file_probes_ok() {
 	_pipeline_probe_hosts || return 1
 	_pipeline_probe_plist || return 1
-	if ! _pipeline_probe_dep; then
-		return 1
-	fi
+	_pipeline_probe_dep || return 1
+	persist_probe_ok || return 1
+	_pipeline_probe_pf || return 1
 	return 0
 }
 
@@ -760,6 +761,22 @@ _pipeline_rollback_layer() {
 	esac
 }
 
+_pipeline_last_good_from_probes() {
+	local name st reason
+	local lg=()
+	while IFS=$'\t' read -r name st reason || [ -n "$name" ]; do
+		[ -n "$name" ] || continue
+		if [ -n "$reason" ]; then
+			lg[${#lg[@]}]="probe=${name} status=${st} reason=${reason}"
+		else
+			lg[${#lg[@]}]="probe=${name} status=${st}"
+		fi
+	done <<EOF
+${PROBE_LINES}
+EOF
+	journal_last_good_write "$PIPELINE_VOLUME" "${lg[@]}"
+}
+
 _pipeline_probes() {
 	journal_step probes start
 	if _pipeline_is_dry_run; then
@@ -767,29 +784,17 @@ _pipeline_probes() {
 		result_ok pipeline probes "dry-run"
 		return 0
 	fi
-	if ! _pipeline_probe_hosts; then
-		result_fail E_VERIFY_FAIL pipeline probes "hosts missing MDM sinkhole"
-		journal_step probes fail E_VERIFY_FAIL
-		return 1
-	fi
-	if ! _pipeline_probe_plist; then
-		result_fail E_VERIFY_FAIL pipeline probes "disabled.plist missing enrollment overrides"
-		journal_step probes fail E_VERIFY_FAIL
-		return 1
-	fi
-	if ! _pipeline_probe_dep; then
-		if [ "${PIPELINE_DEGRADED:-0}" = 1 ]; then
-			journal_step probes skip S_SIP_LIVE
-			result_skip S_SIP_LIVE pipeline probes "DEP file remains under SIP"
+	run_probes
+	case "$RESULT_STATUS" in
+		ok|skip)
+			journal_step probes ok
+			_pipeline_last_good_from_probes || true
+			result_ok pipeline probes "required probes passed"
 			return 0
-		fi
-		result_fail E_VERIFY_FAIL pipeline probes "DEP record still present"
-		journal_step probes fail E_VERIFY_FAIL
-		return 1
-	fi
-	journal_step probes ok
-	result_ok pipeline probes "file-level checks passed"
-	return 0
+			;;
+	esac
+	journal_step probes fail "${RESULT_REASON:-E_VERIFY_FAIL}"
+	return 1
 }
 
 _pipeline_finish() {

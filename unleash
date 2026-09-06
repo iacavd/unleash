@@ -67,7 +67,7 @@ show_cmd_help() {
 		restore)    echo "Restore from backup." ;;
 		backup-list) echo "List available backups." ;;
 		dualboot)   echo "Target an external macOS install." ;;
-		status)     echo "Show MDM enrollment status (Recovery only)." ;;
+		status)     echo "Show MDM enrollment status (live and Recovery)." ;;
 		check)      echo "Pre-format / pre-upgrade safety report." ;;
 		history)    echo "Show event log from monitor/heal runs." ;;
 		history-clear) echo "Clear event log." ;;
@@ -185,7 +185,7 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     discord-bot-status  Check Discord bot status
 
   Info:
-    status          Show MDM enrollment status (Recovery only)
+    status          Show MDM enrollment status (live and Recovery)
     version         Show version
     help            This message
 
@@ -230,6 +230,7 @@ OPTIONS (after the command: ./unleash apply --unattended)
     --create-admin  Create admin user
     --harden        Live-OS harden during apply
     --i-own-this-device          Intent flag
+    --gate          Doctor fail-closed preflight (apply default)
     --webhook <url> Monitor webhook URL
     --brief         Brief report
     --manifest <f>  Fleet manifest file
@@ -380,14 +381,8 @@ cmd_harden() {
 }
 
 cmd_audit() {
-	if ! is_root; then
-		error_exit "Audit needs sudo: sudo ./unleash audit"
-	fi
-	if [ "${UNLEASH_JSON:-0}" = 1 ]; then
-		deep_status --json
-	else
-		deep_status "${2:-}"
-	fi
+	# audit is status (never kill).
+	cmd_status
 }
 
 cmd_whitelist() {
@@ -395,13 +390,18 @@ cmd_whitelist() {
 }
 
 cmd_status() {
-	if is_recovery; then
-		local data_mount
-		data_mount=$(resolve_data_volume)
-		check_mdm_status "$data_mount"
+	local data_mount=""
+	if [ -n "${UNLEASH_VOLUME:-}" ]; then
+		DATA_ROOT="$UNLEASH_VOLUME"
+		data_mount="$UNLEASH_VOLUME"
+	elif is_recovery; then
+		data_mount=$(resolve_data_volume) || exit 2
+		DATA_ROOT="$data_mount"
 	else
-		error_exit "Status works from Recovery. Try 'check' or 'audit' instead."
+		DATA_ROOT=""
+		data_mount=""
 	fi
+	run_status
 }
 
 cmd_check() {
@@ -446,7 +446,18 @@ cmd_monitor_stop() { stop_monitor; }
 cmd_monitor_status() { monitor_status; }
 cmd_history() { show_history; }
 cmd_history_clear() { clear_history; }
-cmd_doctor() { run_doctor; }
+cmd_doctor() {
+	if [ "${UNLEASH_GATE:-0}" = 1 ]; then
+		if run_doctor --gate; then
+			return 0
+		fi
+		if [ "${UNLEASH_JSON:-0}" = 1 ]; then
+			emit_json 2 "${PIPELINE_NEXT:-fix preflight}" "${UNLEASH_VOLUME:-}"
+		fi
+		exit 2
+	fi
+	run_doctor
+}
 
 cmd_test() {
   header "Dry Run Mode"
@@ -654,6 +665,7 @@ UNLEASH_OUTPUT=""
 UNLEASH_PORT=""
 UNLEASH_INTERFACE=""
 UNLEASH_CMD=""
+UNLEASH_GATE=0
 UNLEASH_POSITIONAL=()
 
 # $1=flag $2=argc $3=next token (may be unset). Do not read $2 in the caller first.
@@ -764,6 +776,7 @@ parse_flags() {
 			--create-admin) UNLEASH_CREATE_ADMIN=1; shift ;;
 			--harden)     UNLEASH_HARDEN=1; shift ;;
 			--i-own-this-device) UNLEASH_INTENT_FLAG=1; shift ;;
+			--gate)       UNLEASH_GATE=1; shift ;;
 			--help|-h)
 				show_cmd_help "${UNLEASH_CMD:-}"
 				exit 0

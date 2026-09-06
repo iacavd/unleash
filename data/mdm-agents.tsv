@@ -1,0 +1,7 @@
+# id	proc_pattern	binaries	launch_glob
+jamf	jamf	/usr/local/bin/jamf|/opt/jamf/bin/jamf	/Library/LaunchDaemons/com.jamf*
+kandji	kandji	/usr/local/bin/kandji	/Library/LaunchDaemons/com.kandji*
+mosyle	mosyle	/Applications/Mosyle*.app	/Library/LaunchDaemons/com.mosyle*
+intune	intune	/Applications/Company Portal.app	/Library/LaunchDaemons/com.microsoft.autoupdate*
+addigy	addigy	/usr/local/bin/addigy	/Library/LaunchDaemons/com.addigy*
+ws1	airwatch	/Applications/VMware Workspace*	/Library/LaunchDaemons/com.airwatch*
