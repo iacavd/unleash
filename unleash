@@ -38,6 +38,9 @@ done
 on_err() {
 	local line="${1:-?}"
 	printf 'level=error module=unleash event=trap msg=unhandled error at line %s\n' "$line" >&2 || true
+	if [ -n "${JOURNAL_RUN:-}" ]; then
+		journal_abort || true
+	fi
 	pipeline_lock_release || true
 	return 0
 }
@@ -244,53 +247,23 @@ cmd_version() {
 }
 
 cmd_recovery() {
-	header "Recovery Auto-Fix & DEP Eradication"
-	local data_mount="${2:-}"
-	if [ -z "$data_mount" ]; then
-		if is_recovery; then
-			data_mount=$(resolve_data_volume)
-		else
-			warn "System is not booted in macOS Recovery mode."
-			warn "System Integrity Protection (SIP) protects .cloudConfigRecordFound from deletion while booted in live macOS."
-			if [ -t 0 ] && ! confirm "Continue anyway (e.g. if SIP is disabled or targeting external volume)?"; then
-				info "To permanently delete the record from disk, boot into Recovery (Apple Silicon: hold Power; Intel: Cmd+R), open Terminal, and run: ./unleash recovery"
-				return 0
-			fi
-			data_mount=$(resolve_data_volume 2>/dev/null || echo "/")
-		fi
-	fi
-	auto_recovery_mode "$data_mount"
+	UNLEASH_CREATE_ADMIN=0
+	pipeline_run
 }
 
 cmd_wipe_dep() {
-	header "Wipe DEP Records"
-	local data_mount="${2:-}"
-	if [ -z "$data_mount" ]; then
-		if is_recovery; then
-			data_mount=$(resolve_data_volume)
-		else
-			data_mount=$(resolve_data_volume 2>/dev/null || echo "/")
-		fi
-	fi
-	wipe_dep_records "$data_mount"
+	UNLEASH_CREATE_ADMIN=0
+	pipeline_run
 }
 
 cmd_bypass() {
-	if is_recovery; then
-		header "Full MDM Bypass"
-		local data_mount
-		data_mount=$(resolve_data_volume)
-		full_bypass_mode "$data_mount"
-	else
-		error_exit "Full bypass must run from Recovery mode."
-	fi
+	UNLEASH_CREATE_ADMIN=1
+	pipeline_run
 }
 
 cmd_suppress() {
-	header "Suppress Enrollment"
-	local data_mount
-	data_mount=$(resolve_data_volume)
-	suppress_only_mode "$data_mount"
+	UNLEASH_CREATE_ADMIN=0
+	pipeline_run
 }
 
 cmd_backup() {
@@ -318,70 +291,13 @@ cmd_backup_list() {
 }
 
 cmd_dualboot() {
-	if ! is_root; then
-		error_exit "Dual-boot needs sudo: sudo ./unleash dualboot"
-	fi
-
-	header "Dual-Boot Mode"
-
-	local volumes
-	volumes=$(resolve_target_volumes)
-	local sys_path="${volumes%%|*}"
-	local data_path="${volumes##*|}"
-
-	info "Target system: $sys_path"
-	info "Target data:   $data_path"
-
-	local node
-	node=$(dscl_node "$data_path")
-
-	echo ""
-	step "Creating admin account on target"
-
-	prompt_default realName "Full name" "Apple"
-	local username
-	prompt_username username
-	local passw
-	prompt_password passw
-	local uid
-	uid=$(find_available_uid "$node")
-
-	create_admin_user "$node" "$data_path" "$username" "$realName" "$passw" "$uid"
-	touch "$data_path/private/var/db/.AppleSetupDone"
-
-	begin "Blocking domains"
-	local hosts_file="$data_path/private/etc/hosts"
-	[ -f "$hosts_file" ] || touch "$hosts_file"
-	echo "0.0.0.0 deviceenrollment.apple.com" >>"$hosts_file"
-	echo "0.0.0.0 mdmenrollment.apple.com"    >>"$hosts_file"
-	echo "0.0.0.0 iprofiles.apple.com"        >>"$hosts_file"
-	end_ok
-
-	begin "Resetting config profiles"
-	local config_path="$data_path/private/var/db/ConfigurationProfiles/Settings"
-	mkdir -p "$config_path"
-	rm -f "$config_path/.cloudConfigHasActivationRecord" \
-	      "$config_path/.cloudConfigRecordFound"
-	touch "$config_path/.cloudConfigProfileInstalled" \
-	      "$config_path/.cloudConfigRecordNotFound"
-	end_ok
-
-	info "User: $username"
-	info "Pass: $passw"
-	info "Boot the target and login."
+	# Inlined hosts/DEP body deleted; same pipeline. --volume required if ambiguous.
+	pipeline_run
 }
 
 cmd_heal() {
-	if is_recovery; then
-		local data_mount
-		data_mount=$(resolve_data_volume)
-		heal_suppress "$data_mount"
-	else
-		if ! is_root; then
-			error_exit "Heal needs sudo: sudo ./unleash heal"
-		fi
-		heal_suppress ""
-	fi
+	# Persist stays eligible; the persist step runs iff the probe is dirty.
+	pipeline_run_heal
 }
 
 cmd_persist() {
@@ -700,22 +616,7 @@ cmd_interactive_normal() {
 	done
 }
 
-# Same path as auto-all. Re-feed parsed volume/username/password so cmd_auto_all still sees them.
-cmd_apply() {
-	local extra=()
-	local password=""
-	[ -n "$UNLEASH_USERNAME" ] && extra+=(--username "$UNLEASH_USERNAME")
-	[ -n "$UNLEASH_VOLUME" ] && extra+=(--volume "$UNLEASH_VOLUME")
-	if [ -n "$UNLEASH_PASSWORD" ]; then
-		password="$UNLEASH_PASSWORD"
-	elif [ -n "$UNLEASH_PASSWORD_FILE" ]; then
-		[ -f "$UNLEASH_PASSWORD_FILE" ] || error_exit "Password file not found: $UNLEASH_PASSWORD_FILE"
-		IFS= read -r password < "$UNLEASH_PASSWORD_FILE" || true
-	fi
-	[ -n "$password" ] && extra+=(--password "$password")
-	[ -n "$UNLEASH_REALNAME" ] && extra+=(--realname "$UNLEASH_REALNAME")
-	cmd_auto_all ${extra[@]+"${extra[@]}"} "$@"
-}
+# cmd_apply is defined in lib/pipeline.sh (pipeline_run).
 
 # --- CLI parse (sourced by tests/test_cli.bats) ---
 # bash 3.2, no namerefs. All initialized for set -u.
@@ -739,6 +640,7 @@ UNLEASH_PASSWORD_FILE=""
 UNLEASH_FV_PASSWORD_FILE=""
 UNLEASH_FV_KEY_FILE=""
 UNLEASH_SNAPSHOT=""
+UNLEASH_USB_INTENT=0
 UNLEASH_REALNAME=""
 UNLEASH_WEBHOOK=""
 UNLEASH_BRIEF=0
@@ -877,6 +779,8 @@ parse_flags() {
 apply_command_defaults() {
 	case "$1" in
 		auto-all) UNLEASH_UNATTENDED=1 ;;
+		bypass|by) UNLEASH_CREATE_ADMIN=1 ;;
+		recovery|rec|auto-recovery|suppress|sv|wipe-dep|wipe) UNLEASH_CREATE_ADMIN=0 ;;
 	esac
 }
 # --- end CLI parse ---
@@ -918,12 +822,12 @@ main() {
 	fi
 
 	case "$cmd" in
-		apply)            cmd_apply "$@" ;;
-		auto-all)         cmd_apply "$@" ;;
-		recovery|rec|auto-recovery) cmd_recovery "${@}" ;;
-		wipe-dep|wipe)    cmd_wipe_dep "${@}" ;;
-		bypass|by)        cmd_bypass ;;
-		suppress|sv)      cmd_suppress ;;
+		apply)            cmd_apply ;;
+		auto-all)         UNLEASH_UNATTENDED=1; cmd_apply ;;
+		recovery|rec|auto-recovery) UNLEASH_CREATE_ADMIN=0; cmd_apply ;;
+		wipe-dep|wipe)    UNLEASH_CREATE_ADMIN=0; cmd_apply ;;
+		bypass|by)        UNLEASH_CREATE_ADMIN=1; cmd_apply ;;
+		suppress|sv)      UNLEASH_CREATE_ADMIN=0; cmd_apply ;;
 		heal)             cmd_heal ;;
 		persist)          cmd_persist ;;
 		unpersist)        cmd_unpersist ;;
@@ -936,7 +840,7 @@ main() {
 		backup)           cmd_backup ;;
 		restore)          cmd_restore ;;
 		backup-list)      cmd_backup_list ;;
-		dualboot)         cmd_dualboot ;;
+		dualboot)         cmd_apply ;;
 		status|st|ls)     cmd_status ;;
 		check)            cmd_check ;;
 		history)          cmd_history ;;

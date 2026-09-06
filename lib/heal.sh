@@ -213,6 +213,21 @@ is_persist_installed() {
 	[ -f "$plist_path" ] && [ -f "$sentinel" ]
 }
 
+# Dirty if binary missing or plist is not live-path /Library/Unleash/unleash.
+persist_probe_ok() {
+	_persist_use_root "$@"
+	local bin plist
+	bin="$(unleash_root)/unleash"
+	plist="${DATA_ROOT}/Library/LaunchDaemons/${PERSIST_LABEL}.plist"
+	[ -f "$bin" ] || return 1
+	[ -f "$plist" ] || return 1
+	grep -F '<string>/Library/Unleash/unleash</string>' "$plist" >/dev/null || return 1
+	if grep -E '/Volumes/' "$plist" >/dev/null 2>&1; then
+		return 1
+	fi
+	return 0
+}
+
 persist_copy() {
 	_persist_use_root "$@"
 

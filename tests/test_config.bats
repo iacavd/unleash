@@ -77,3 +77,9 @@ teardown() {
   load_config
   [ "$VERBOSE" = "true" ]
 }
+
+@test "load_config reads I_OWN_THIS_DEVICE" {
+  echo "I_OWN_THIS_DEVICE=1" > "$CONFIG_FILE"
+  load_config
+  [ "$UNLEASH_USB_INTENT" = 1 ]
+}

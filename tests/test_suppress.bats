@@ -3,6 +3,7 @@
 
 setup() {
   load '../lib/colors.sh'
+  load '../lib/result.sh'
   load '../lib/detect.sh'
   load '../lib/suppress.sh'
   TEST_DIR=$(mktemp -d)

@@ -229,6 +229,10 @@ _detect_ensure_mounted() {
 _detect_ensure_writable() {
 	local mount="$1"
 	local probe="$mount/Library/Unleash/state/.write-test"
+	# --dry-run: skip touch write-test; volume must still resolve.
+	if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
+		return 0
+	fi
 	mkdir -p "$mount/Library/Unleash/state" || true
 	if ! touch "$probe" 2>/tmp/unleash-touch.err; then
 		# No || true: remount failure is not fatal if the next touch succeeds.

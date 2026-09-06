@@ -142,3 +142,56 @@ teardown() {
   pipeline_rollback_files "$SNAPSHOT_ID" "$DATA_ROOT"
   [ "$(cat "$DATA_ROOT/private/etc/hosts")" = "original hosts" ]
 }
+
+@test "result_skip under set -e does not abort pipeline_run" {
+  load '../lib/config.sh'
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  load '../lib/firewall.sh'
+  load '../lib/ma_detect.sh'
+  mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  mkdir -p "$DATA_ROOT/private/etc"
+  mkdir -p "$DATA_ROOT/private/var/db/ConfigurationProfiles/Settings"
+  mkdir -p "$DATA_ROOT/private/var/db/com.apple.xpc.launchd"
+  mkdir -p "$DATA_ROOT/Library/Unleash/state"
+  printf 'owned=1\nts=2026-09-06T00:00:00Z\nvolume_uuid=\n' > "$DATA_ROOT/Library/Unleash/state/intent"
+  UNLEASH_VOLUME="$DATA_ROOT"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  wipe_dep_records() {
+    result_skip S_SIP_LIVE suppress dep_wipe "DEP remains under SIP"
+    return 0
+  }
+  set -e
+  run pipeline_run
+  [ "$status" -eq 3 ]
+  echo "$output" | grep -q S_SIP_LIVE
+  grep -q "iprofiles.apple.com" "$DATA_ROOT/private/etc/hosts"
+  journal="$DATA_ROOT/Library/Unleash/state/journal"
+  grep -q 'op=BEGIN' "$journal"
+  grep -q 'name=dep_wipe' "$journal"
+  grep -q 'status=skip' "$journal"
+}
+
+@test "pipeline_run E_VOLUME_RO exits 2 with no BEGIN" {
+  load '../lib/config.sh'
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  resolve_data_volume() {
+    result_fail E_VOLUME_RO detect remount "Data volume is read-only after mount -uw"
+    return 1
+  }
+  UNLEASH_VOLUME="$DATA_ROOT"
+  mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  run pipeline_run
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q E_VOLUME_RO
+  if [ -f "$DATA_ROOT/Library/Unleash/state/journal" ]; then
+    ! grep -q 'op=BEGIN' "$DATA_ROOT/Library/Unleash/state/journal"
+  fi
+}

@@ -163,3 +163,36 @@ setup() {
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "risk="
 }
+
+@test "./unleash auto-all --create-admin without username is E_CREDS_REQUIRED" {
+  run "$UNLEASH" auto-all --create-admin
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q E_CREDS_REQUIRED
+}
+
+@test "./unleash apply --unattended --create-admin password-file 1234 is E_DEFAULT_PASSWORD" {
+  pw=$(mktemp)
+  printf '1234\n' > "$pw"
+  run "$UNLEASH" apply --unattended --create-admin --username alice --password-file "$pw"
+  rm -f "$pw"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q E_DEFAULT_PASSWORD
+}
+
+@test "./unleash apply --unattended without sidecar/intent is E_INTENT_MISSING" {
+  vol=$(mktemp -d)
+  mkdir -p "$vol/private/var/db/dslocal/nodes/Default"
+  run "$UNLEASH" apply --unattended --volume "$vol"
+  rc=$status
+  rm -rf "$vol"
+  [ "$rc" -eq 2 ]
+  echo "$output" | grep -q E_INTENT_MISSING
+}
+
+@test "autorun.sh execs apply --unattended and has no --i-own-this-device" {
+  autorun="$ROOT/payloads/autorun.sh"
+  grep -q 'apply --unattended' "$autorun"
+  if grep -q 'i-own-this-device' "$autorun"; then
+    false
+  fi
+}

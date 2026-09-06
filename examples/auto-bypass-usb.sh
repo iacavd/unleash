@@ -1,7 +1,7 @@
 #!/bin/bash
 # auto-bypass-usb.sh
 # Drop this on an external SSD. Boot to Recovery, run it.
-# No typing, no prompts — just bypass.
+# Intent is I_OWN_THIS_DEVICE next to unleash (or unleash.conf), not a flag.
 #
 # Usage from Recovery Terminal:
 #   chmod +x "/Volumes/YourSSD/auto-bypass-usb.sh"
@@ -16,4 +16,4 @@ if [ ! -f "$UNLEASH" ]; then
   exit 1
 fi
 
-"$UNLEASH" bypass
+"$UNLEASH" apply --unattended "$@"

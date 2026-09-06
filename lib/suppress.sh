@@ -1,6 +1,11 @@
-
-
 PB=/usr/libexec/PlistBuddy
+
+# Overlay callers may not load result.sh; pipeline always does.
+if ! type result_ok >/dev/null 2>&1; then
+	result_ok() { return 0; }
+	result_skip() { return 0; }
+	result_fail() { return 0; }
+fi
 
 wipe_dep_records() {
 	local data_mount="${1:-}"
@@ -31,17 +36,134 @@ wipe_dep_records() {
 
 	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
 		if is_recovery; then
-			warn "Could not remove .cloudConfigRecordFound at $cfg (check if volume is mounted read-only)"
-			return 1
-		else
-			info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
-			info "To delete the on-disk file record, boot into Recovery and run: ./unleash recovery"
+			result_fail E_PLIST_FAIL suppress dep_wipe "Could not remove .cloudConfigRecordFound at $cfg"
 			return 0
 		fi
-	else
-		success "DEP activation record (.cloudConfigRecordFound) erased from disk"
+		result_skip S_SIP_LIVE suppress dep_wipe "DEP file remains under SIP; boot Recovery to wipe on-disk record"
 		return 0
 	fi
+	result_ok suppress dep_wipe "DEP activation record erased from disk"
+	return 0
+}
+
+_suppress_mdm_domains() {
+	printf '%s\n' \
+		iprofiles.apple.com \
+		deviceenrollment.apple.com \
+		mdmenrollment.apple.com \
+		acmdm.apple.com \
+		axm-adm-mdm.apple.com \
+		albert.apple.com \
+		gdmf.apple.com \
+		ax.init-content.apple.com \
+		init-content.apple.com \
+		configuration.apple.com \
+		xp.apple.com \
+		gs.apple.com \
+		tb.apple.com \
+		vpp.itunes.apple.com
+}
+
+# Hosts sinkhole only. Pipeline journals this as step hosts.
+suppress_hosts() {
+	local data_mount="$1"
+	local hosts="$data_mount/private/etc/hosts"
+	local cfg="$data_mount/private/var/db/ConfigurationProfiles/Settings"
+	local mdm_host="" d
+
+	if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
+		info "[DRY RUN] Would block MDM domains in $hosts"
+		result_ok suppress hosts "dry-run"
+		return 0
+	fi
+
+	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+		mdm_host=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
+			| grep -ioE 'https?://[a-z0-9._-]+' | sed -E 's#https?://##' \
+			| sort -u | grep -viE '(^|\.)apple\.com$' | head -1 || true)
+	fi
+
+	mkdir -p "$(dirname "$hosts")" || {
+		result_fail E_HOSTS_PERM suppress hosts "cannot create $(dirname "$hosts")"
+		return 0
+	}
+	[ -f "$hosts" ] || touch "$hosts" || {
+		result_fail E_HOSTS_PERM suppress hosts "cannot create $hosts"
+		return 0
+	}
+	grep -q "Added by unleash" "$hosts" 2>/dev/null || {
+		printf '\n# Added by unleash — DEP enrollment block\n' >>"$hosts" || {
+			result_fail E_HOSTS_PERM suppress hosts "cannot write $hosts"
+			return 0
+		}
+	}
+
+	while IFS= read -r d || [ -n "$d" ]; do
+		[ -n "$d" ] || continue
+		grep -qiE "[[:space:]]$d(\$|[[:space:]])" "$hosts" 2>/dev/null && continue
+		printf '0.0.0.0 %s\n::      %s\n' "$d" "$d" >>"$hosts" || {
+			result_fail E_HOSTS_PERM suppress hosts "cannot write $hosts"
+			return 0
+		}
+	done <<EOF
+$(_suppress_mdm_domains)
+${mdm_host}
+EOF
+
+	result_ok suppress hosts "MDM domains sinkholed in $hosts"
+	return 0
+}
+
+# disabled.plist overrides. PlistBuddy failure is a hard fail (rollback, exit 1).
+suppress_daemons() {
+	local data_mount="$1"
+	local ldp="$data_mount/private/var/db/com.apple.xpc.launchd/disabled.plist"
+	local setupdone="$data_mount/private/var/db/.AppleSetupDone"
+	local pb="${PLISTBUDDY:-${PB:-/usr/libexec/PlistBuddy}}"
+	local label ok disabled_count=0
+
+	if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
+		info "[DRY RUN] Would disable enrollment daemons in $ldp"
+		result_ok suppress daemons "dry-run"
+		return 0
+	fi
+
+	mkdir -p "$(dirname "$ldp")" || {
+		result_fail E_PLIST_FAIL suppress daemons "cannot create $(dirname "$ldp")"
+		return 0
+	}
+	[ -f "$ldp" ] || printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' >"$ldp" || {
+		result_fail E_PLIST_FAIL suppress daemons "cannot create $ldp"
+		return 0
+	}
+
+	for label in \
+		com.apple.ManagedClient \
+		com.apple.ManagedClient.enroll \
+		com.apple.ManagedClient.cloudConfiguration \
+		com.apple.ManagedClientAgent \
+		com.apple.ManagedClientAgent.agent \
+		com.apple.mdmclient \
+		com.apple.mdmclient.daemon \
+		com.apple.mdmclient.daemon.runatboot \
+		com.apple.mdmclient.agent \
+		com.apple.activationd; do
+		ok=0
+		if "$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null; then
+			ok=1
+		elif "$pb" -c "Set :$label true" "$ldp"; then
+			ok=1
+		fi
+		if [ "$ok" -eq 0 ]; then
+			result_fail E_PLIST_FAIL suppress daemons "PlistBuddy failed for $label on $ldp"
+			return 0
+		fi
+		disabled_count=$((disabled_count + 1))
+	done
+
+	touch "$setupdone" 2>/dev/null || true
+	result_ok suppress daemons "Enrollment daemons disabled ($disabled_count overrides)"
+	return 0
 }
 
 suppress_enrollment() {
@@ -56,57 +178,20 @@ suppress_enrollment() {
 		return 0
 	fi
 
-	local hosts="$data_mount/private/etc/hosts"
 	local cfg="$data_mount/private/var/db/ConfigurationProfiles/Settings"
-	local ldp="$data_mount/private/var/db/com.apple.xpc.launchd/disabled.plist"
-	local setupdone="$data_mount/private/var/db/.AppleSetupDone"
 
 	step "Reading DEP activation record..."
-	local mdm_host="" org=""
+	local org=""
 	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-		mdm_host=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
-			| grep -ioE 'https?://[a-z0-9._-]+' | sed -E 's#https?://##' \
-			| sort -u | grep -viE '(^|\.)apple\.com$' | head -1 || true)
 		org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
 			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
 		[ -n "$org" ] && info "Device assigned in ABM to: $org"
-		[ -n "$mdm_host" ] && info "Org MDM host: $mdm_host"
 	else
 		info "No DEP activation record present."
 	fi
 
 	step "Blocking enrollment domains (Data volume hosts)..."
-	[ -f "$hosts" ] || { mkdir -p "$(dirname "$hosts")"; touch "$hosts"; }
-	grep -q "Added by unleash" "$hosts" 2>/dev/null || {
-		echo "" >>"$hosts"
-		echo "# Added by unleash — DEP enrollment block" >>"$hosts"
-	}
-
-	local domains=(
-		iprofiles.apple.com
-		deviceenrollment.apple.com
-		mdmenrollment.apple.com
-		acmdm.apple.com
-		axm-adm-mdm.apple.com
-		albert.apple.com
-		gdmf.apple.com
-		ax.init-content.apple.com
-		init-content.apple.com
-		configuration.apple.com
-		xp.apple.com
-		gs.apple.com
-		tb.apple.com
-		vpp.itunes.apple.com
-	)
-	[ -n "$mdm_host" ] && domains+=("$mdm_host")
-
-	local d
-	for d in "${domains[@]}"; do
-		grep -qiE "[[:space:]]$d(\$|[[:space:]])" "$hosts" 2>/dev/null \
-			&& { info "$d already blocked"; continue; }
-		printf '0.0.0.0 %s\n::      %s\n' "$d" "$d" >>"$hosts"
-		success "blocked $d"
-	done
+	suppress_hosts "$data_mount"
 
 	step "Resetting DEP markers..."
 	wipe_dep_records "$data_mount"
@@ -133,28 +218,7 @@ suppress_enrollment() {
 	success "User-level MDM artifacts removed"
 
 	step "Disabling enrollment daemons..."
-	mkdir -p "$(dirname "$ldp")"
-	[ -f "$ldp" ] || printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' >"$ldp"
-	local disabled_count=0
-	for label in \
-		com.apple.ManagedClient \
-		com.apple.ManagedClient.enroll \
-		com.apple.ManagedClient.cloudConfiguration \
-		com.apple.ManagedClientAgent \
-		com.apple.ManagedClientAgent.agent \
-		com.apple.mdmclient \
-		com.apple.mdmclient.daemon \
-		com.apple.mdmclient.daemon.runatboot \
-		com.apple.mdmclient.agent \
-		com.apple.activationd; do
-		$PB -c "Add :$label bool true" "$ldp" 2>/dev/null \
-			|| $PB -c "Set :$label true" "$ldp" 2>/dev/null || true
-		info "disabled $label"
-		disabled_count=$((disabled_count + 1))
-	done
-	success "Enrollment daemons disabled ($disabled_count overrides)"
-
-	touch "$setupdone" 2>/dev/null || true
+	suppress_daemons "$data_mount"
 }
 
 suppress_only_mode() {
