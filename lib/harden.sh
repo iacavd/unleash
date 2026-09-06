@@ -1,9 +1,33 @@
 
 harden_live_os() {
 	step "Killing running MDM processes..."
-	for p in ManagedClient mdmclient activationd; do
-		if pkill -f "$p" 2>/dev/null; then
-			success "Killed $p"
+	local mdm_services=(
+		"com.apple.ManagedClient"
+		"com.apple.ManagedClient.enroll"
+		"com.apple.ManagedClient.cloudConfiguration"
+		"com.apple.mdmclient"
+		"com.apple.mdmclient.daemon"
+		"com.apple.mdmclient.daemon.runatboot"
+		"com.apple.mobileactivationd"
+		"com.apple.activationd"
+	)
+
+	if command -v launchctl &>/dev/null; then
+		for svc in "${mdm_services[@]}"; do
+			sudo launchctl bootout "system/$svc" 2>/dev/null || true
+			sudo launchctl kill SIGKILL "system/$svc" 2>/dev/null || true
+			sudo launchctl disable "system/$svc" 2>/dev/null || true
+		done
+	fi
+
+	for p in ManagedClient mdmclient mobileactivationd activationd; do
+		if pgrep -fi "$p" >/dev/null 2>&1; then
+			sudo pkill -9 -fi "$p" 2>/dev/null || true
+			if pgrep -fi "$p" >/dev/null 2>&1; then
+				warn "Process $p still running after kill"
+			else
+				success "Killed $p"
+			fi
 		else
 			info "$p not running"
 		fi
