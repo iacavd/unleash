@@ -47,23 +47,37 @@ _harden_is_live_os() {
 }
 
 # $1=label. Deletes every configuration profile on the Mac. Opt-in only.
+_harden_profiles_bin() {
+	if [ -n "${PROFILES:-}" ] && [ -x "$PROFILES" ]; then
+		printf '%s' "$PROFILES"
+		return 0
+	fi
+	if [ -x /usr/bin/profiles ]; then
+		printf '%s' /usr/bin/profiles
+		return 0
+	fi
+	command -v profiles 2>/dev/null || true
+}
+
 _harden_remove_all_profiles() {
-	local installed
-	if [ ! -x "${PROFILES:-/usr/bin/profiles}" ] && ! command -v profiles >/dev/null 2>&1; then
+	local installed bin
+	bin=$(_harden_profiles_bin)
+	if [ -z "$bin" ] || [ ! -x "$bin" ]; then
 		info "profiles command not available; skip profile removal"
 		return 0
 	fi
-	installed=$(profiles -C 2>/dev/null | grep -c "ProfileDisplayName" || true)
+	installed=$("$bin" -C 2>/dev/null | grep -c "ProfileDisplayName" || true)
 	if [ "${installed:-0}" -eq 0 ]; then
 		info "No installed profiles to remove"
 		return 0
 	fi
 	warn "Removing ALL configuration profiles ($installed). This is irreversible without a backup."
-	if profiles -D -F; then
+	if "$bin" -D -F; then
 		success "Forced profile removal finished"
-	else
-		warn "ERROR E_PROFILES_FAIL: profiles -D -F failed. SIP or user approval may block it. Next: boot Recovery and run ./unleash apply"
+		return 0
 	fi
+	result_fail E_PROFILES_FAIL harden profiles "profiles -D -F failed. SIP or user approval may block it. Next: boot Recovery and run ./unleash apply"
+	return 0
 }
 
 # Fail-closed: every label must Print true. Sets RESULT_*.
@@ -129,6 +143,9 @@ harden_live_os() {
 	if [ "${UNLEASH_REMOVE_ALL_PROFILES:-0}" = 1 ]; then
 		step "Removing all configuration profiles (--remove-all-profiles)"
 		_harden_remove_all_profiles
+		if [ "${RESULT_STATUS:-ok}" = "fail" ]; then
+			return 0
+		fi
 	else
 		info "Skipping profiles -D -F (deletes every profile). Pass --remove-all-profiles to opt in."
 	fi

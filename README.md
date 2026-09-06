@@ -152,13 +152,13 @@ sudo ./unleash firewall-off
 
 Flushes the Unleash pf anchor and restores pf.conf.
 
-### whitelist — Block only MDM, keep iCloud
+### whitelist — Alias of firewall
 
 ```bash
 sudo ./unleash whitelist
 ```
 
-Alternative to `firewall` that resolves only the essential MDM domains (mdmenrollment.apple.com, deviceenrollment.apple.com, iprofiles.apple.com) to IPs and blocks those, leaving everything else untouched. iCloud, App Store, and updates should work normally.
+Alias of `firewall`. Same selective engine, one anchor `com.unleash/mdm`. iCloud, App Store, and updates stay up.
 
 ### harden — Live cleanup from booted system
 
@@ -502,7 +502,7 @@ No. Clean install wipes the Data volume. Re-run after reinstalling.
 The serial stays in ABM. If the device connects to the internet with enrollment daemons re-enabled, it will re-enroll.
 
 **What if I need iCloud?**
-Use `whitelist` instead of `firewall` or `suppress`. It blocks only MDM endpoints.
+Use `firewall` or `whitelist` (same selective engine, one anchor `com.unleash/mdm`). Do not use `firewall-broad`.
 
 **Why does MDM come back after Migration Assistant?**
 MA copies user-level caches, preferences, and launch agents. Unleash handles this — run `bypass` or `suppress` from Recovery after migrating.

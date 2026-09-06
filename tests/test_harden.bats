@@ -23,11 +23,11 @@ teardown() {
   grep -q 'profiles -D -F' "$ROOT/lib/harden.sh"
   grep -A 6 'UNLEASH_REMOVE_ALL_PROFILES' "$ROOT/lib/harden.sh" | grep -q '_harden_remove_all_profiles'
   # The actual command (not an info string) lives in the opt-in helper.
-  grep -n 'if profiles -D -F' "$ROOT/lib/harden.sh"
+  grep -n -- '-D -F' "$ROOT/lib/harden.sh"
   awk '
     /^_harden_remove_all_profiles\(\)/ { inh=1 }
     /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ && !/_harden_remove_all_profiles/ { inh=0 }
-    inh && /if profiles -D -F/ { ok=1 }
+    inh && /-D -F/ { ok=1 }
     END { exit ok ? 0 : 1 }
   ' "$ROOT/lib/harden.sh"
 }
@@ -101,6 +101,31 @@ teardown() {
     return 1
   fi
   grep -q 'S_LIVE_ONLY' "$ROOT/lib/pipeline.sh"
+}
+
+@test "cmd_harden maps RESULT_STATUS=fail to exit 1; S_LIVE_ONLY skip stays 0" {
+  awk '/^cmd_harden\(\)/,/^}$/' "$ROOT/unleash" | grep -q 'RESULT_STATUS'
+  awk '/^cmd_harden\(\)/,/^}$/' "$ROOT/unleash" | grep -q 'fail) exit 1'
+  if awk '/^cmd_harden\(\)/,/^}$/' "$ROOT/unleash" | grep -q 'S_LIVE_ONLY'; then
+    echo "S_LIVE_ONLY must not be treated as CLI fail" >&2
+    return 1
+  fi
+}
+
+@test "remove-all-profiles fail is E_PROFILES_FAIL and not ok" {
+  is_recovery() { return 1; }
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/var/db/com.apple.xpc.launchd"
+  fail_bin="$TEST_DIR/fake-profiles"
+  printf '%s\n' '#!/bin/bash' 'if [ "$1" = "-C" ]; then echo ProfileDisplayName; exit 0; fi' 'exit 1' > "$fail_bin"
+  chmod +x "$fail_bin"
+  PROFILES="$fail_bin"
+  UNLEASH_REMOVE_ALL_PROFILES=1
+  RESULT_STATUS=ok
+  RESULT_REASON=""
+  harden_live_os
+  [ "$RESULT_STATUS" = fail ]
+  [ "$RESULT_REASON" = E_PROFILES_FAIL ]
 }
 
 @test "harden daemon disable Print true for all 10 labels" {
