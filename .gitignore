@@ -1,5 +1,9 @@
 .unleash-backup/
+unleash-standalone.sh
 *.swp
 *.swo
+*.log
 .DS_Store
 .vercel
+node_modules/
+*.asc

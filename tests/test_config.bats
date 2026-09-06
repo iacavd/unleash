@@ -3,35 +3,77 @@
 setup() {
   load '../lib/colors.sh'
   load '../lib/config.sh'
-  CONFIG_FILE=$(mktemp)
+  TEST_DIR=$(mktemp -d)
+  CONFIG_FILE="$TEST_DIR/.unleash.conf"
 }
 
 teardown() {
-  rm -f "$CONFIG_FILE"
+  rm -rf "$TEST_DIR"
 }
 
-@test "load_config handles missing file" {
-  CONFIG_FILE="/nonexistent/config"
+@test "load_config handles missing config file" {
+  CONFIG_FILE="$TEST_DIR/nonexistent"
   run load_config
   [ "$status" -eq 0 ]
 }
 
-@test "save_config writes key=value" {
-  save_config "WEBHOOK" "https://example.com" 2>/dev/null || true
-  run grep "WEBHOOK=https://example.com" "$CONFIG_FILE"
-  [ "$status" -eq 0 ]
-}
-
-@test "load_config reads saved values" {
-  save_config "LOG_LEVEL" "verbose" 2>/dev/null || true
-  VERBOSE=false
-  load_config
-  [ "$VERBOSE" = true ]
+@test "save_config creates config file" {
+  save_config "TEST_KEY" "test_value" 2>/dev/null
+  [ -f "$CONFIG_FILE" ]
+  run grep -c "TEST_KEY=test_value" "$CONFIG_FILE"
+  [ "$output" -ge 1 ]
 }
 
 @test "save_config updates existing key" {
-  save_config "KEY" "old" 2>/dev/null || true
-  save_config "KEY" "new" 2>/dev/null || true
-  run grep -c "KEY=new" "$CONFIG_FILE"
-  [ "$output" -eq 1 ]
+  echo "KEY=old" > "$CONFIG_FILE"
+  save_config "KEY" "new" 2>/dev/null
+  run grep "KEY=" "$CONFIG_FILE"
+  [[ "$output" == "KEY=new" ]]
+}
+
+@test "save_config appends new key" {
+  echo "EXISTING=value" > "$CONFIG_FILE"
+  save_config "NEW_KEY" "new_value" 2>/dev/null
+  run grep -c "NEW_KEY=new_value" "$CONFIG_FILE"
+  [ "$output" -ge 1 ]
+  run grep -c "EXISTING=value" "$CONFIG_FILE"
+  [ "$output" -ge 1 ]
+}
+
+@test "load_config reads WEBHOOK" {
+  echo "WEBHOOK=https://example.com/hook" > "$CONFIG_FILE"
+  load_config
+  [ "$DISCORD_WEBHOOK" = "https://example.com/hook" ]
+}
+
+@test "load_config reads AUTO_USERNAME" {
+  echo "AUTO_USERNAME=testuser" > "$CONFIG_FILE"
+  load_config
+  [ "$AUTO_USERNAME" = "testuser" ]
+}
+
+@test "load_config reads AUTO_PASSWORD" {
+  echo "AUTO_PASSWORD=testpass" > "$CONFIG_FILE"
+  load_config
+  [ "$AUTO_PASSWORD" = "testpass" ]
+}
+
+@test "load_config reads BACKUP_RETENTION" {
+  echo "BACKUP_RETENTION=10" > "$CONFIG_FILE"
+  load_config
+  [ "$BACKUP_RETENTION" = "10" ]
+}
+
+@test "load_config skips comment lines" {
+  echo "# This is a comment" > "$CONFIG_FILE"
+  echo "WEBHOOK=test" >> "$CONFIG_FILE"
+  run load_config
+  [ "$status" -eq 0 ]
+}
+
+@test "load_config handles LOG_LEVEL=verbose" {
+  VERBOSE=false
+  echo "LOG_LEVEL=verbose" > "$CONFIG_FILE"
+  load_config
+  [ "$VERBOSE" = "true" ]
 }

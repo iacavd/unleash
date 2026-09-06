@@ -10,6 +10,7 @@ do_uninstall() {
   if [ -f "$plist" ]; then
     launchctl unload "$plist" 2>/dev/null || true
     rm -f "$plist"
+    rm -f "/Library/LaunchDaemons/${PERSIST_SENTINEL:-'.unleash-persist-installed'}"
     end_ok
   else
     end_fail; echo "     Not installed"
@@ -26,11 +27,13 @@ do_uninstall() {
   fi
 
   begin "Cleaning pf anchors"
-  local anchors=("/etc/pf.anchors/com.unleash/mdm" "/etc/pf.anchors/com.unleash.selective")
+  local anchors=("/etc/pf.anchors/com.unleash/mdm" "/etc/pf.anchors/com.unleash.selective" "/etc/pf.anchors/com.unleash/vpn-kill")
   for a in "${anchors[@]}"; do
     [ -f "$a" ] && rm -f "$a"
   done
-  for anchor_name in "com.unleash/mdm" "com.unleash.selective"; do
+  # Clean the com.unleash directory if empty
+  [ -d "/etc/pf.anchors/com.unleash" ] && rmdir "/etc/pf.anchors/com.unleash" 2>/dev/null || true
+  for anchor_name in "com.unleash/mdm" "com.unleash.selective" "com.unleash/vpn-kill"; do
     pfctl -a "$anchor_name" -F all 2>/dev/null || true
   done
   local pf_conf="/etc/pf.conf"
@@ -45,10 +48,13 @@ do_uninstall() {
   local hosts="/private/etc/hosts"
   if [ -f "$hosts" ]; then
     sed -i '' '/# Added by unleash/d' "$hosts" 2>/dev/null || true
-    local domains=("iprofiles.apple.com" "deviceenrollment.apple.com" "mdmenrollment.apple.com")
+    local domains=("iprofiles.apple.com" "deviceenrollment.apple.com" "mdmenrollment.apple.com"
+      "acmdm.apple.com" "axm-adm-mdm.apple.com" "albert.apple.com" "gdmf.apple.com"
+      "ax.init-content.apple.com" "init-content.apple.com" "configuration.apple.com"
+      "xp.apple.com" "gs.apple.com" "tb.apple.com" "vpp.itunes.apple.com")
     for d in "${domains[@]}"; do
       sed -i '' "/[[:space:]]$d/d" "$hosts" 2>/dev/null || true
-      sed -i '' "/::$d/d" "$hosts" 2>/dev/null || true
+      sed -i '' "/::.*$d/d" "$hosts" 2>/dev/null || true
     done
     end_ok
   else
@@ -92,6 +98,24 @@ do_uninstall() {
     end_ok
   else
     end_fail; echo "     Not running"
+  fi
+
+  begin "Stopping Discord bot if running"
+  local discord_pid="/tmp/unleash-discord/bot.pid"
+  if [ -f "$discord_pid" ]; then
+    kill "$(cat "$discord_pid")" 2>/dev/null || true
+    rm -rf "/tmp/unleash-discord"
+    end_ok
+  else
+    end_fail; echo "     Not running"
+  fi
+
+  begin "Removing telemetry file"
+  if [ -f "$HOME/.unleash-telemetry" ]; then
+    rm -f "$HOME/.unleash-telemetry"
+    end_ok
+  else
+    end_fail; echo "     Not found"
   fi
 
   echo ""

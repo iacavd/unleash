@@ -115,6 +115,9 @@ run_doctor() {
   fi
 
   echo ""
+  check_security_posture
+
+  echo ""
   echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
   if [ "$errors" -eq 0 ] && [ "$warnings" -eq 0 ]; then
     echo -e "${CYAN}║${NC}  ${GRN}All checks passed${NC}                       ${CYAN}║${NC}"

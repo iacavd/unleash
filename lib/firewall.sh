@@ -19,29 +19,99 @@ pf_backup_conf() {
 	cp "$pf_conf" "$backup" && info "Backed up pf.conf: $backup"
 }
 
-install_pf_mdm_block() {
+# Selective mode: resolves specific MDM IPs and blocks only those
+# This is the SAFE default — iCloud, App Store, and updates still work
+install_pf_mdm_block_selective() {
 	local data_mount="$1"
 	local root=""
 	[ -n "$data_mount" ] && root="$data_mount"
 
-	step "Installing pf anchor for MDM IP block..."
+	step "Installing pf anchor for selective MDM IP block..."
 	pf_backup_conf "$root"
 
 	local anchor_dir="${root}${FIREWALL_ANCHOR_DIR}"
 	local anchor_file="${anchor_dir}/${FIREWALL_ANCHOR}"
 
 	pf_backup_anchor "$root"
-	mkdir -p "$anchor_dir"
+	mkdir -p "$(dirname "$anchor_file")"
+
+	# Resolve specific MDM domain IPs using fallback chain
+	> "$anchor_file"
+	echo "# Unleash MDM block — selective mode (iCloud-safe)" >> "$anchor_file"
+	echo "# Blocks only resolved MDM infrastructure IPs" >> "$anchor_file"
+
+	local domains="deviceenrollment.apple.com mdmenrollment.apple.com iprofiles.apple.com"
+	local total=0
+	for d in $domains; do
+		local ips
+		ips=$(_resolve_dns "$d" "A" 2>/dev/null || true)
+		if [ -n "$ips" ]; then
+			while IFS= read -r ip; do
+				[ -n "$ip" ] || continue
+				echo "block drop out proto {tcp,udp} to {$ip}" >> "$anchor_file"
+				total=$((total + 1))
+			done <<< "$ips"
+		fi
+	done
+
+	# If DNS failed entirely, fall back to narrow Apple MDM ranges
+	if [ "$total" -eq 0 ]; then
+		warn "DNS resolution failed — using known MDM IP fallbacks"
+		for ip in "${MDM_FALLBACK_IPV4[@]}"; do
+			echo "block drop out proto {tcp,udp} to {$ip}" >> "$anchor_file"
+		done
+	fi
+
+	chmod 644 "$anchor_file"
+	success "Selective anchor written: $anchor_file ($total resolved IPs)"
+
+	_install_pf_anchor "$root" "$anchor_file"
+
+	info "Selective mode: only MDM IPs are blocked."
+	info "iCloud, App Store, and Apple updates should still work."
+}
+
+# Broad mode: blocks entire Apple IP range (17.0.0.0/8)
+# This is AGGRESSIVE — blocks ALL Apple services including iCloud
+install_pf_mdm_block_broad() {
+	local data_mount="$1"
+	local root=""
+	[ -n "$data_mount" ] && root="$data_mount"
+
+	step "Installing pf anchor for BROAD MDM IP block..."
+	pf_backup_conf "$root"
+
+	local anchor_dir="${root}${FIREWALL_ANCHOR_DIR}"
+	local anchor_file="${anchor_dir}/${FIREWALL_ANCHOR}"
+
+	pf_backup_anchor "$root"
+	mkdir -p "$(dirname "$anchor_file")"
 
 	cat > "$anchor_file" << 'ANCHOR'
-# Unleash MDM block — Apple MDM infrastructure IP ranges
+# Unleash MDM block — BROAD mode (blocks ALL Apple services)
 # These ranges host deviceenrollment.apple.com, mdmenrollment.apple.com, etc.
 # Blocking at pf level is immune to DNS-over-HTTPS bypass.
+# WARNING: This blocks iCloud, App Store, and Apple updates.
 block drop out proto {tcp,udp} to {17.0.0.0/8}
 block drop out proto {tcp,udp} to {17.128.0.0/10}
 ANCHOR
 	chmod 644 "$anchor_file"
-	success "Anchor written: $anchor_file"
+	success "Broad anchor written: $anchor_file"
+
+	_install_pf_anchor "$root" "$anchor_file"
+
+	warn "BROAD MODE: This blocks ALL Apple services (iCloud, App Store, updates)."
+	warn "Use 'firewall' (selective) instead if you need Apple services."
+}
+
+# Default: selective mode
+install_pf_mdm_block() {
+	install_pf_mdm_block_selective "$@"
+}
+
+_install_pf_anchor() {
+	local root="$1"
+	local anchor_file="$2"
 
 	local pf_conf="${root}${FIREWALL_CONF}"
 	local anchor_line="anchor \"${FIREWALL_ANCHOR}\""
@@ -84,9 +154,6 @@ ANCHOR
 	else
 		warn "pfctl not available"
 	fi
-
-	warn "This blocks ALL Apple services (iCloud, App Store, updates)."
-	warn "For selective blocking, use Little Snitch or LuLu instead."
 }
 
 remove_pf_mdm_block() {
@@ -124,9 +191,19 @@ pf_status() {
 	if command -v pfctl &>/dev/null; then
 		pfctl -si 2>/dev/null | grep -E "Status|Enabled" || echo "  pf not enabled"
 		echo ""
-		pfctl -a "$FIREWALL_ANCHOR" -s rules 2>/dev/null \
-			&& info "Unleash MDM anchor rules:" \
-			|| info "No Unleash MDM anchor loaded"
+		local rules
+		rules=$(pfctl -a "$FIREWALL_ANCHOR" -s rules 2>/dev/null || true)
+		if [ -n "$rules" ]; then
+			info "Unleash MDM anchor rules:"
+			echo "$rules" | sed 's/^/  /'
+			if echo "$rules" | grep -q "17.0.0.0/8"; then
+				info "Mode: BROAD (all Apple IPs blocked)"
+			else
+				info "Mode: SELECTIVE (only MDM IPs blocked)"
+			fi
+		else
+			info "No Unleash MDM anchor loaded"
+		fi
 	else
 		warn "pfctl not available"
 	fi

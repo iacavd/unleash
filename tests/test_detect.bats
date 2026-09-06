@@ -5,27 +5,48 @@ setup() {
   load '../lib/detect.sh'
 }
 
-@test "is_root returns true when EUID is 0" {
-  [ "$EUID" -eq 0 ] && skip "Already root"
-  [ "$EUID" -ne 0 ] && skip "Not root"
-}
-
-@test "is_root returns false when EUID is not 0" {
-  [ "$EUID" -ne 0 ] && skip "Not root (expected)"
-  [ "$EUID" -eq 0 ] && skip "Is root"
-}
-
-@test "is_recovery returns false in normal environment" {
-  run is_recovery 2>/dev/null || true
+@test "is_recovery returns false on normal boot" {
+  # On a normal test machine, this should be false
+  run is_recovery
   [ "$status" -ne 0 ]
 }
 
-@test "detect_system_volume returns empty when no sys vol found" {
-  run detect_system_volume 2>/dev/null || true
-  [ "$status" -eq 0 ]
+@test "is_root checks EUID" {
+  # In test context, likely not root
+  if [ "$EUID" -eq 0 ]; then
+    run is_root
+    [ "$status" -eq 0 ]
+  else
+    run is_root
+    [ "$status" -ne 0 ]
+  fi
 }
 
-@test "resolve_data_volume errors on non-existent device" {
-  run resolve_data_volume 2>/dev/null || true
+@test "detect_boot_mode returns normal on standard boot" {
+  run detect_boot_mode
+  [ "$output" = "normal" ]
+}
+
+@test "detect_macos_version returns a version string" {
+  run detect_macos_version
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+\.[0-9]+ ]]
+}
+
+@test "detect_macos_major returns a number" {
+  run detect_macos_major
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+$ ]]
+}
+
+@test "resolve_all_volumes returns paths or fails gracefully" {
+  # On a standard Mac, there should be at least one Data volume
+  run resolve_all_volumes 2>/dev/null
+  # It's okay if it fails (e.g., no APFS), but shouldn't crash
+  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+}
+
+@test "detect_system_volume handles no match" {
+  run detect_system_volume "/nonexistent"
   [ "$status" -eq 0 ]
 }

@@ -2,6 +2,7 @@
 
 setup() {
   load '../lib/colors.sh'
+  load '../lib/whitelist.sh'
   load '../lib/firewall.sh'
   TEST_DIR=$(mktemp -d)
   mkdir -p "$TEST_DIR/etc/pf.anchors/com.unleash"
@@ -12,14 +13,29 @@ teardown() {
   rm -rf "$TEST_DIR"
 }
 
-@test "install_pf_mdm_block creates anchor" {
+@test "install_pf_mdm_block creates anchor (default=selective)" {
   run install_pf_mdm_block "$TEST_DIR" 2>/dev/null || true
   [ -f "$TEST_DIR/etc/pf.anchors/com.unleash/mdm" ]
 }
 
-@test "install_pf_mdm_block includes MDM ranges" {
-  run install_pf_mdm_block "$TEST_DIR" 2>/dev/null || true
+@test "install_pf_mdm_block_selective creates selective anchor" {
+  run install_pf_mdm_block_selective "$TEST_DIR" 2>/dev/null || true
+  [ -f "$TEST_DIR/etc/pf.anchors/com.unleash/mdm" ]
+  # Should NOT have the broad 17.0.0.0/8 range
+  run grep -c "17.0.0.0/8" "$TEST_DIR/etc/pf.anchors/com.unleash/mdm" || true
+  [ "${output:-0}" -eq 0 ]
+}
+
+@test "install_pf_mdm_block_broad creates broad anchor" {
+  run install_pf_mdm_block_broad "$TEST_DIR" 2>/dev/null || true
+  [ -f "$TEST_DIR/etc/pf.anchors/com.unleash/mdm" ]
   run grep -c "17.0.0.0/8" "$TEST_DIR/etc/pf.anchors/com.unleash/mdm"
+  [ "$output" -ge 1 ]
+}
+
+@test "install_pf_mdm_block_broad includes warning comment" {
+  run install_pf_mdm_block_broad "$TEST_DIR" 2>/dev/null || true
+  run grep -c "BROAD" "$TEST_DIR/etc/pf.anchors/com.unleash/mdm"
   [ "$output" -ge 1 ]
 }
 
@@ -52,7 +68,7 @@ teardown() {
   run install_pf_mdm_block "$TEST_DIR" 2>/dev/null || true
   run remove_pf_mdm_block "$TEST_DIR" 2>/dev/null || true
   run grep -c "com.unleash" "$TEST_DIR/etc/pf.conf" || true
-  [ "$output" -eq 0 ]
+  [ "${output:-0}" -eq 0 ]
 }
 
 @test "pf_backup_anchor creates backup file" {

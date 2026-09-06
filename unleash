@@ -6,7 +6,7 @@ VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord; do
+for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui; do
 	_lib_path="$LIB_DIR/$_lib.sh"
 	if [ -f "$_lib_path" ]; then
 		source "$_lib_path"
@@ -23,13 +23,15 @@ show_cmd_help() {
 		heal)       echo "Re-apply suppression after macOS updates." ;;
 		persist)    echo "Install auto-heal LaunchDaemon." ;;
 		unpersist)  echo "Remove auto-heal LaunchDaemon." ;;
-		firewall)   echo "Block MDM IPs via pf (kernel-level). DoH-proof." ;;
+		firewall)   echo "Block MDM IPs via pf (selective, iCloud-safe)." ;;
+		firewall-broad) echo "Block ALL Apple IPs via pf (aggressive, blocks iCloud)." ;;
 		firewall-off) echo "Remove pf MDM block." ;;
 		harden)     echo "Kill MDM processes + remove profiles + flush DNS." ;;
 		audit)      echo "Deep system scan with risk score." ;;
 		whitelist)  echo "Block only MDM domains, keep iCloud/App Store." ;;
 		backup)     echo "Save current state." ;;
 		restore)    echo "Restore from backup." ;;
+		backup-list) echo "List available backups." ;;
 		dualboot)   echo "Target an external macOS install." ;;
 		status)     echo "Show MDM enrollment status (Recovery only)." ;;
 		check)      echo "Pre-format / pre-upgrade safety report." ;;
@@ -58,6 +60,7 @@ show_cmd_help() {
 		vpn-kill)   echo "Install pf kill-switch (blocks MDM outside VPN)." ;;
 		vpn-kill-remove) echo "Remove VPN kill-switch." ;;
 		vpn-kill-status) echo "Check VPN kill-switch status." ;;
+		auto-all)   echo "Automated deployment: bypass+firewall+persist+monitor (no prompts)." ;;
 		version)    echo "Show version and exit." ;;
 		help)       show_help ;;
 		*)          show_help ;;
@@ -82,7 +85,8 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     unpersist       Remove the persistence LaunchDaemon
 
   Firewall:
-    firewall        Block Apple MDM at kernel level via pf
+    firewall        Block MDM IPs at kernel level via pf (selective, iCloud-safe)
+    firewall-broad  Block ALL Apple IPs (aggressive, blocks iCloud too)
     firewall-off    Remove pf rules
     whitelist       Block only MDM endpoints, keep iCloud/App Store
 
@@ -101,8 +105,9 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     monitor-status  Check if daemon is running
 
   State:
-    backup          Save hosts, profiles, launchd state
+    backup          Save hosts, profiles, launchd state, pf.conf
     restore         Revert from backup
+    backup-list     List available backup snapshots
     dualboot        Target an external macOS install
 
     init            Interactive setup wizard
@@ -110,6 +115,7 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     remediate       Per-org MDM cleanup
     predict         Look up serial number enrollment
     telemetry       Manage anonymous usage stats (opt-in)
+
   Diagnostics:
     doctor          Run pre-flight checks on this environment
     report          Generate a full markdown status report
@@ -121,6 +127,10 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     vpn-kill        Install VPN kill-switch (prevents MDM leaks outside VPN)
     vpn-kill-remove Remove VPN kill-switch
     vpn-kill-status Check VPN kill-switch status
+
+  Automation:
+    auto-all        Fully automated deployment (no prompts)
+                    Options: --username X --password X --volume /path
 
   Management:
     config          View/edit persistent settings (~/.unleash.conf)
@@ -199,6 +209,10 @@ cmd_backup() {
 cmd_restore() {
 	header "Restore"
 	restore_state
+}
+
+cmd_backup_list() {
+	backup_list
 }
 
 cmd_dualboot() {
@@ -304,6 +318,19 @@ cmd_firewall() {
 	fi
 }
 
+cmd_firewall_broad() {
+	if ! is_root; then
+		error_exit "Firewall needs sudo: sudo ./unleash firewall-broad"
+	fi
+	if is_recovery; then
+		local data_mount
+		data_mount=$(resolve_data_volume)
+		install_pf_mdm_block_broad "$data_mount"
+	else
+		install_pf_mdm_block_broad ""
+	fi
+}
+
 cmd_firewall_off() {
 	if ! is_root; then
 		error_exit "Needs sudo: sudo ./unleash firewall-off"
@@ -331,7 +358,7 @@ cmd_audit() {
 	if ! is_root; then
 		error_exit "Audit needs sudo: sudo ./unleash audit"
 	fi
-	deep_status
+	deep_status "${2:-}"
 }
 
 cmd_whitelist() {
@@ -372,11 +399,11 @@ cmd_monitor() {
   while [ $# -gt 0 ]; do
     case "$1" in
       install|uninstall) args+=("$1"); shift ;;
-      --webhook) webhook="$2"; shift 2 ;;
+      --webhook) webhook="${2:-}"; shift 2 ;;
       *) args+=("$1"); shift ;;
     esac
   done
-  set -- "${args[@]}"
+  set -- "${args[@]+"${args[@]}"}"
   if [ -n "$webhook" ]; then
     DISCORD_WEBHOOK="$webhook"
   fi
@@ -391,6 +418,8 @@ cmd_monitor_stop() { stop_monitor; }
 cmd_monitor_status() { monitor_status; }
 cmd_history() { show_history; }
 cmd_history_clear() { clear_history; }
+cmd_doctor() { run_doctor; }
+
 cmd_test() {
   header "Dry Run Mode"
   DRY_RUN=true
@@ -537,11 +566,11 @@ parse_global_opts() {
 		case "$1" in
 			--verbose) VERBOSE=true; shift ;;
 			--dry-run) DRY_RUN=true; shift ;;
-			--log-file) LOG_FILE="$2"; shift 2 ;;
+			--log-file) LOG_FILE="${2:-}"; shift 2 ;;
 			*) args+=("$1"); shift ;;
 		esac
 	done
-	set -- "${args[@]}"
+	set -- "${args[@]+"${args[@]}"}"
 	echo "$@"
 }
 
@@ -562,12 +591,14 @@ main() {
 		persist)          cmd_persist ;;
 		unpersist)        cmd_unpersist ;;
 		firewall|fw)      cmd_firewall ;;
+		firewall-broad)   cmd_firewall_broad ;;
 		firewall-off|fw-off) cmd_firewall_off ;;
 		harden)           cmd_harden ;;
-		audit)            cmd_audit "$2" ;;
+		audit)            cmd_audit "${@}" ;;
 		whitelist|wl)     cmd_whitelist ;;
 		backup)           cmd_backup ;;
 		restore)          cmd_restore ;;
+		backup-list)      cmd_backup_list ;;
 		dualboot)         cmd_dualboot ;;
 		status|st|ls)     cmd_status ;;
 		check)            cmd_check ;;
@@ -580,27 +611,35 @@ main() {
 		monitor-stop|mn-stop) cmd_monitor_stop ;;
 		monitor-status|mn-st) cmd_monitor_status ;;
 		version|-v|--version) cmd_version ;;
+		doctor|doc)      cmd_doctor ;;
 		init)            cmd_init ;;
 		suggest)         cmd_suggest ;;
-		remediate)       cmd_remediate "$2" ;;
-		predict)         cmd_predict "$2" ;;
-		telemetry)       telemetry_opt_in "$2" ;;
+		remediate)       cmd_remediate "${2:-}" ;;
+		predict)         cmd_predict "${2:-}" ;;
+		telemetry)       telemetry_opt_in "${2:-}" ;;
 		demo)             run_demo ;;
-		update)           do_self_update ;;
-		uninstall)        do_uninstall ;;
-		report)           generate_report "$2" ;;
+		update|up)        do_self_update ;;
+		uninstall|uni)    do_uninstall ;;
+		report)           generate_report "${2:-}" "${3:-}" ;;
 		config)           cmd_config "$@" ;;
-		vpn-kill)         vpn_kill_install "$@" ;;
-		vpn-kill-remove)  vpn_kill_remove ;;
-		vpn-kill-status)  vpn_kill_status ;;
-		reinstall)
+		vpn-kill|vk)      vpn_kill_install "$@" ;;
+		vpn-kill-remove|vkr)  vpn_kill_remove ;;
+		vpn-kill-status|vks)  vpn_kill_status ;;
+		apns-block)       block_apns ;;
+		apns-unblock)     unblock_apns ;;
+		quarantine)       quarantine_profiles "${2:-/}" ;;
+		webhook-test)     send_webhook_alert "${2:-generic}" "${3:-}" "${4:-Test message}" "${5:-Test Title}" ;;
+		simulate)         run_simulation "${2:-/}" ;;
+		tui|interactive)  launch_tui ;;
+		auto-all)         cmd_auto_all "$@" ;;
+		reinstall|rei)
 			do_uninstall
 			install_persist_launchdaemon ""
 			install_selective_block ""
 			install_monitor_launchdaemon ""
 			success "Reinstall complete"
 			;;
-		discord-bot)          cmd_discord_bot_install "$2" "$3" ;;
+		discord-bot)          cmd_discord_bot_install "${2:-}" "${3:-}" ;;
 		discord-bot-stop)     cmd_discord_bot_stop ;;
 		discord-bot-status)   cmd_discord_bot_status ;;
 		help|-h|--help)   show_help; exit 0 ;;

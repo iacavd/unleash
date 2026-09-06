@@ -1,4 +1,6 @@
 
+PERSIST_SENTINEL=".unleash-persist-installed"
+
 heal_suppress() {
 	local data_mount="$1"
 	[ -z "$data_mount" ] && data_mount=""
@@ -64,6 +66,15 @@ _persist_mount_root() {
 	fi
 }
 
+is_persist_installed() {
+	local data_mount="${1:-}"
+	local root
+	root="$(_persist_mount_root "$data_mount")"
+	local plist_path="${root}/Library/LaunchDaemons/com.unleash.heal.plist"
+	local sentinel="${root}/Library/LaunchDaemons/${PERSIST_SENTINEL}"
+	[ -f "$plist_path" ] && [ -f "$sentinel" ]
+}
+
 install_persist_launchdaemon() {
 	local data_mount="$1"
 	local root
@@ -80,6 +91,7 @@ install_persist_launchdaemon() {
 
 	local plist_dir="${root}/Library/LaunchDaemons"
 	local plist_path="${plist_dir}/com.unleash.heal.plist"
+	local sentinel="${plist_dir}/${PERSIST_SENTINEL}"
 
 	mkdir -p "$plist_dir"
 
@@ -113,6 +125,11 @@ install_persist_launchdaemon() {
 	PLIST
 
 	chmod 644 "$plist_path"
+
+	# Write sentinel file for clean state tracking
+	echo "installed=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$sentinel"
+	echo "source=$unleash_src" >> "$sentinel"
+
 	success "LaunchDaemon written to $plist_path"
 
 	step "Loading LaunchDaemon..."
@@ -130,6 +147,7 @@ remove_persist_launchdaemon() {
 	local root
 	root="$(_persist_mount_root "$data_mount")"
 	local plist_path="${root}/Library/LaunchDaemons/com.unleash.heal.plist"
+	local sentinel="${root}/Library/LaunchDaemons/${PERSIST_SENTINEL}"
 
 	if [ -f "$plist_path" ]; then
 		step "Removing Unleash LaunchDaemon..."
@@ -137,6 +155,7 @@ remove_persist_launchdaemon() {
 			launchctl unload "$plist_path" 2>/dev/null || true
 		fi
 		rm -f "$plist_path"
+		rm -f "$sentinel"
 		success "LaunchDaemon removed"
 	else
 		info "No Unleash LaunchDaemon installed"
