@@ -7,7 +7,7 @@ run_preformat_check() {
   if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
     local org
     org=$(plutil -convert xml1 -o - "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null \
-      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/')
+      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
     echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
     [ -n "$org" ] && echo -e "  ${YEL}Device assigned to: $org${NC}"
     clean=false
@@ -44,7 +44,10 @@ run_preformat_check() {
   step "Checking installed profiles..."
   if command -v profiles &>/dev/null; then
     local profile_count
-    profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+    profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+    profile_count="${profile_count:-0}"
+    profile_count=$(echo "$profile_count" | head -n 1 | tr -dc '0-9')
+    profile_count="${profile_count:-0}"
     if [ "$profile_count" -gt 0 ]; then
       echo -e "  ${YEL}$profile_count profile(s) installed${NC}"
       clean=false

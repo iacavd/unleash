@@ -25,7 +25,10 @@ generate_report_brief() {
   fi
   if command -v profiles &>/dev/null; then
     local pc
-    pc=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+    pc=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+    pc="${pc:-0}"
+    pc=$(echo "$pc" | head -n 1 | tr -dc '0-9')
+    pc="${pc:-0}"
     [ "$pc" -gt 0 ] && { risk="MEDIUM"; issues=$((issues + 1)); }
   fi
   ps aux 2>/dev/null | grep -qiE "mdm|managedclient" && grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
@@ -67,7 +70,7 @@ generate_report_full() {
   if [ -f "$cfg/.cloudConfigRecordFound" ]; then
     local org
     org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
-      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/')
+      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
     echo -e "  ${RED}DEP record: FOUND${org:+ (Organization: $org)}${NC}"
   else
     echo -e "  ${GRN}DEP record: clean${NC}"
@@ -77,7 +80,10 @@ generate_report_full() {
   echo -e "${CYAN}─── Installed Profiles ─────────────────────────────────────${NC}"
   if command -v profiles &>/dev/null; then
     local count
-    count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+    count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+    count="${count:-0}"
+    count=$(echo "$count" | head -n 1 | tr -dc '0-9')
+    count="${count:-0}"
     if [ "$count" -gt 0 ]; then
       echo -e "  ${YEL}$count profile(s) installed:${NC}"
       sudo profiles -C -output=xml 2>/dev/null | grep -A1 "ProfileDisplayName" | grep "<string>" \
@@ -214,7 +220,10 @@ generate_report_json() {
 
   local profile_count=0
   if command -v profiles &>/dev/null; then
-    profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+    profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+    profile_count="${profile_count:-0}"
+    profile_count=$(echo "$profile_count" | head -n 1 | tr -dc '0-9')
+    profile_count="${profile_count:-0}"
   fi
   report="${report}  \"installed_profiles\": $profile_count,\n"
 

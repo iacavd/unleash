@@ -89,7 +89,10 @@ deep_status() {
 	step "Installed Configuration Profiles"
 	if command -v profiles &>/dev/null; then
 		local profile_count
-		profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+		profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+		profile_count="${profile_count:-0}"
+		profile_count=$(echo "$profile_count" | head -n 1 | tr -dc '0-9')
+		profile_count="${profile_count:-0}"
 		if [ "$profile_count" -gt 0 ]; then
 			warn "$profile_count profile(s) installed:"
 			sudo profiles -C -output=xml 2>/dev/null | grep -A1 "ProfileDisplayName" | grep "<string>" | sed 's/.*<string>\(.*\)<\/string>.*/  - \1/'
@@ -111,6 +114,9 @@ deep_status() {
 	if command -v security &>/dev/null; then
 		local mdm_certs
 		mdm_certs=$(sudo security find-identity -p basic 2>/dev/null | grep -ci "mdm\|MDM\|Apple.*Push" || true)
+		mdm_certs="${mdm_certs:-0}"
+		mdm_certs=$(echo "$mdm_certs" | head -n 1 | tr -dc '0-9')
+		mdm_certs="${mdm_certs:-0}"
 		if [ "$mdm_certs" -gt 0 ]; then
 			warn "$mdm_certs MDM-related certificate(s) found"
 			sudo security find-identity -p basic 2>/dev/null | grep -i "mdm\|Apple.*Push"
@@ -173,8 +179,14 @@ deep_status() {
 
 	step "Overall Assessment"
 	local risk="LOW"
-	[ "$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)" -gt 0 ] && risk="MEDIUM"
-	ps aux 2>/dev/null | grep -qiE "mdm|managedclient" && risk="HIGH"
+	local cur_pc
+	cur_pc=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+	cur_pc="${cur_pc:-0}"
+	cur_pc=$(echo "$cur_pc" | head -n 1 | tr -dc '0-9')
+	cur_pc="${cur_pc:-0}"
+	[ "$cur_pc" -gt 0 ] && risk="MEDIUM"
+	ps aux 2>/dev/null | grep -qiE "mdm|managedclient" && grep -qv grep && risk="HIGH"
+	local cfg="/private/var/db/ConfigurationProfiles/Settings"
 	[ -f "$cfg/.cloudConfigRecordFound" ] && risk="CRITICAL"
 
 	case "$risk" in
@@ -193,7 +205,10 @@ deep_status_json() {
 
 	local profile_count=0
 	if command -v profiles &>/dev/null; then
-		profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || echo 0)
+		profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+		profile_count="${profile_count:-0}"
+		profile_count=$(echo "$profile_count" | head -n 1 | tr -dc '0-9')
+		profile_count="${profile_count:-0}"
 	fi
 	json="${json}  \"profile_count\": $profile_count,\n"
 
