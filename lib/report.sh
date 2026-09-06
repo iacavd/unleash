@@ -31,7 +31,7 @@ generate_report_brief() {
     pc="${pc:-0}"
     [ "$pc" -gt 0 ] && { risk="MEDIUM"; issues=$((issues + 1)); }
   fi
-  ps aux 2>/dev/null | grep -qiE "mdm|managedclient" && grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
+  ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd)" | grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
 
   local persist="no"
   [ -f "/Library/LaunchDaemons/com.unleash.heal.plist" ] && persist="yes"
@@ -100,18 +100,15 @@ generate_report_full() {
     echo ""
     local rules
     rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
-    if [ -n "$rules" ]; then
-      echo -e "  ${GRN}MDM anchor: active${NC}"
-      if echo "$rules" | grep -q "17.0.0.0/8"; then
-        echo -e "  ${YEL}Mode: BROAD (all Apple IPs blocked)${NC}"
-      else
-        echo -e "  ${GRN}Mode: SELECTIVE (only MDM IPs)${NC}"
-      fi
+    if echo "$rules" | grep -q "block"; then
+      echo -e "  ${GRN}MDM block anchor: loaded${NC}"
+      echo "$rules" | sed 's/^/    /'
     else
-      echo -e "  ${YEL}MDM anchor: not loaded${NC}"
+      echo -e "  ${YEL}MDM block anchor: not loaded${NC}"
     fi
-    pfctl -a "com.unleash.selective" -s rules 2>/dev/null | grep -q "block" \
-      && echo -e "  ${GRN}Selective anchor: active${NC}" \
+    rules=$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)
+    [ -n "$rules" ] \
+      && echo -e "  ${GRN}Selective anchor: loaded${NC}" \
       || echo -e "  ${YEL}Selective anchor: not loaded${NC}"
   fi
   echo ""
@@ -174,7 +171,7 @@ generate_report_full() {
 
   echo -e "${CYAN}─── Running MDM Processes ──────────────────────────────────${NC}"
   local procs
-  procs=$(ps aux 2>/dev/null | grep -iE "mdm|managedclient|activation" | grep -v grep || true)
+  procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep || true)
   if [ -n "$procs" ]; then
     echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
   else

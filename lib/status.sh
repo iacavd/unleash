@@ -155,7 +155,7 @@ deep_status() {
 
 	step "Running MDM Processes"
 	local procs
-	procs=$(ps aux 2>/dev/null | grep -iE "mdm|managedclient|activation" | grep -v grep || true)
+	procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep || true)
 	if [ -n "$procs" ]; then
 		echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
 	else
@@ -185,15 +185,35 @@ deep_status() {
 	cur_pc=$(echo "$cur_pc" | head -n 1 | tr -dc '0-9')
 	cur_pc="${cur_pc:-0}"
 	[ "$cur_pc" -gt 0 ] && risk="MEDIUM"
-	ps aux 2>/dev/null | grep -qiE "mdm|managedclient" && grep -qv grep && risk="HIGH"
+	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd)" | grep -qv grep && risk="HIGH"
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
 	[ -f "$cfg/.cloudConfigRecordFound" ] && risk="CRITICAL"
 
 	case "$risk" in
-		LOW) echo -e "  ${GRN}Risk: $risk — Device appears clean${NC}" ;;
-		MEDIUM) echo -e "  ${YEL}Risk: $risk — Residual profiles detected${NC}" ;;
-		HIGH) echo -e "  ${RED}Risk: $risk — MDM processes still running${NC}" ;;
-		CRITICAL) echo -e "  ${RED}Risk: $risk — Active DEP record found${NC}" ;;
+		LOW)
+			echo -e "  ${GRN}Risk: $risk — Device appears clean${NC}"
+			echo -e "  ${GRN}Suppressions active and no running MDM processes detected.${NC}"
+			;;
+		MEDIUM)
+			echo -e "  ${YEL}Risk: $risk — Residual configuration profiles detected${NC}"
+			echo -e "  ${CYAN}Recommended Action:${NC}"
+			echo -e "    ${YEL}sudo ./unleash harden${NC}    (Purges residual MDM profiles and stops background daemons)"
+			;;
+		HIGH)
+			echo -e "  ${RED}Risk: $risk — MDM background daemons/processes are running${NC}"
+			echo -e "  ${CYAN}Recommended Action:${NC}"
+			echo -e "    ${YEL}sudo ./unleash harden${NC}    (Terminates live MDM processes and suppresses daemons)"
+			echo -e "    ${YEL}sudo ./unleash firewall${NC}  (Enables pf packet filter to drop all MDM traffic)"
+			;;
+		CRITICAL)
+			echo -e "  ${RED}Risk: $risk — Active DEP cloud configuration record present${NC}"
+			echo -e "  ${CYAN}Recommended Actions:${NC}"
+			echo -e "    1. ${YEL}sudo ./unleash heal${NC}      (Resets DEP markers, updates /etc/hosts blocks, disables daemons)"
+			echo -e "    2. ${YEL}sudo ./unleash harden${NC}    (Kills active MDM daemons & flushes system caches)"
+			echo -e "    3. ${YEL}sudo ./unleash firewall${NC}  (Blocks outbound Apple MDM network endpoints)"
+			echo -e "    4. ${YEL}sudo ./unleash persist${NC}   (Installs auto-heal LaunchDaemon on system boot)"
+			echo -e "    ${MAG}Note: If wiping/reformatting, boot into Recovery and run './unleash bypass'.${NC}"
+			;;
 	esac
 }
 
