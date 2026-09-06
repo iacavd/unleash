@@ -41,6 +41,22 @@ teardown() {
   [[ "$output" == *"firewall"* ]]
 }
 
+@test "generate_report uses UNLEASH_JSON without argv --json" {
+  UNLEASH_JSON=1
+  run generate_report 2>/dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"version"* ]]
+  [[ "$output" == *"timestamp"* ]]
+  [[ "$output" != *"UNLEASH SYSTEM REPORT"* ]]
+}
+
+@test "generate_report uses UNLEASH_BRIEF without argv --brief" {
+  UNLEASH_BRIEF=1
+  run generate_report 2>/dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"risk="* ]]
+}
+
 @test "generate_report_json includes system info" {
   run generate_report_json 2>/dev/null
   [[ "$output" == *"macos_version"* ]]

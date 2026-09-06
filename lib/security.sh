@@ -66,7 +66,7 @@ check_security_posture() {
   echo ""
 }
 
-# Tombstone: refuse the old 17/8:443 drop. Narrow APNs is a later spec.
+# Tombstone: refuse the old 17/8:443 drop.
 _apns_removed() {
   error_exit "ERROR: apns-block was removed. The old rule dropped TCP 443 to all of 17.0.0.0/8. Next: use firewall (selective) or firewall-broad."
 }

@@ -28,7 +28,7 @@ vpn_kill_install() {
     done
   fi
 
-  local user_if="${2:-}"
+  local user_if="${UNLEASH_INTERFACE:-${2:-}}"
   [ -n "$user_if" ] && vpn_if="$user_if"
 
   if [ -z "$vpn_if" ]; then

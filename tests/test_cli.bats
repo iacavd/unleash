@@ -82,3 +82,72 @@ setup() {
   [ "$status" -eq 1 ]
   echo "$output" | grep -Eq '17/8|17\.0\.0\.0/8|443'
 }
+
+@test "parse_flags --volume at end of argv exits 1" {
+  run parse_flags --volume
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --volume"
+}
+
+@test "parse_flags --volume next token is a flag exits 1" {
+  run parse_flags --volume --unattended
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --volume"
+}
+
+@test "parse_flags --log-file at end of argv exits 1" {
+  run parse_flags --log-file
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --log-file"
+}
+
+@test "parse_flags --log-file next token is a flag exits 1" {
+  run parse_flags --log-file --verbose
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --log-file"
+}
+
+@test "./unleash apply --volume exits 1 with missing value" {
+  run "$UNLEASH" apply --volume
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --volume"
+}
+
+@test "./unleash apply --log-file --unattended exits 1 with missing value" {
+  run "$UNLEASH" apply --log-file --unattended
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Missing value for --log-file"
+}
+
+@test "./unleash apply --bogus still exits 1" {
+  run "$UNLEASH" apply --bogus
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "Unknown flag"
+}
+
+@test "parse_flags accepts --password --webhook --brief --manifest" {
+  parse_flags --password secret --webhook http://example --brief --manifest fleet.json
+  [ "$UNLEASH_PASSWORD" = "secret" ]
+  [ "$UNLEASH_WEBHOOK" = "http://example" ]
+  [ "$UNLEASH_BRIEF" = 1 ]
+  [ "$UNLEASH_MANIFEST" = "fleet.json" ]
+}
+
+@test "./unleash version --webhook http://x is not unknown" {
+  run "$UNLEASH" version --webhook http://x
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "unleash v"
+}
+
+@test "./unleash report --json selects JSON not markdown box" {
+  run "$UNLEASH" report --json
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "version"
+  ! echo "$output" | grep -q "UNLEASH SYSTEM REPORT"
+}
+
+@test "./unleash report --brief is not unknown" {
+  run "$UNLEASH" report --brief
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "risk="
+}

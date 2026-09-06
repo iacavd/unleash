@@ -80,7 +80,7 @@ check_mdm_status() {
 }
 
 deep_status() {
-	if [ "${1:-}" = "--json" ]; then
+	if [ "${1:-}" = "--json" ] || [ "${UNLEASH_JSON:-0}" = 1 ]; then
 		deep_status_json
 		return
 	fi

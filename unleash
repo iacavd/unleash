@@ -119,7 +119,7 @@ Bypass / suppress / monitor MDM enrollment on macOS.
 
   Fleet & Automation:
     auto-all        Fully automated deployment (no prompts)
-                    Options: --username X --password X --volume /path
+                    Options: --username X --password-file F --volume /path
     fleet-apply     Apply declarative fleet manifest (--manifest file.json)
     upgrade-os      Safe macOS software update wrapper with auto-heal
     simulate        Dry-run simulation of planned modifications
@@ -209,6 +209,12 @@ OPTIONS (after the command: ./unleash apply --unattended)
     --create-admin  Create admin user
     --harden        Live-OS harden during apply
     --i-own-this-device          Intent flag
+    --webhook <url> Monitor webhook URL
+    --brief         Brief report
+    --manifest <f>  Fleet manifest file
+    --output <f>    Report output file
+    --port <n>      Web server port
+    --interface <if> VPN kill-switch interface
 
 Run without arguments for interactive menu.
 HELP
@@ -277,7 +283,7 @@ cmd_backup() {
 }
 
 cmd_restore() {
-	# Uses UNLEASH_SNAPSHOT when set (snapshot engine lands in a later PR).
+	# Uses UNLEASH_SNAPSHOT when set.
 	header "Restore"
 	restore_state
 }
@@ -429,7 +435,11 @@ cmd_audit() {
 	if ! is_root; then
 		error_exit "Audit needs sudo: sudo ./unleash audit"
 	fi
-	deep_status "${2:-}"
+	if [ "${UNLEASH_JSON:-0}" = 1 ]; then
+		deep_status --json
+	else
+		deep_status "${2:-}"
+	fi
 }
 
 cmd_whitelist() {
@@ -465,7 +475,7 @@ cmd_check() {
 }
 
 cmd_monitor() {
-  local webhook=""
+  local webhook="${UNLEASH_WEBHOOK:-}"
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -649,18 +659,21 @@ cmd_interactive_normal() {
 	done
 }
 
-# Thin wrapper until PR 8 pipeline_run. Same path as auto-all.
-# Re-feed parsed volume/username so existing cmd_auto_all still sees them.
+# Same path as auto-all. Re-feed parsed volume/username/password so cmd_auto_all still sees them.
 cmd_apply() {
-	if [ -n "$UNLEASH_USERNAME" ] && [ -n "$UNLEASH_VOLUME" ]; then
-		cmd_auto_all --username "$UNLEASH_USERNAME" --volume "$UNLEASH_VOLUME" "$@"
-	elif [ -n "$UNLEASH_USERNAME" ]; then
-		cmd_auto_all --username "$UNLEASH_USERNAME" "$@"
-	elif [ -n "$UNLEASH_VOLUME" ]; then
-		cmd_auto_all --volume "$UNLEASH_VOLUME" "$@"
-	else
-		cmd_auto_all "$@"
+	local extra=()
+	local password=""
+	[ -n "$UNLEASH_USERNAME" ] && extra+=(--username "$UNLEASH_USERNAME")
+	[ -n "$UNLEASH_VOLUME" ] && extra+=(--volume "$UNLEASH_VOLUME")
+	if [ -n "$UNLEASH_PASSWORD" ]; then
+		password="$UNLEASH_PASSWORD"
+	elif [ -n "$UNLEASH_PASSWORD_FILE" ]; then
+		[ -f "$UNLEASH_PASSWORD_FILE" ] || error_exit "Password file not found: $UNLEASH_PASSWORD_FILE"
+		IFS= read -r password < "$UNLEASH_PASSWORD_FILE" || true
 	fi
+	[ -n "$password" ] && extra+=(--password "$password")
+	[ -n "$UNLEASH_REALNAME" ] && extra+=(--realname "$UNLEASH_REALNAME")
+	cmd_auto_all ${extra[@]+"${extra[@]}"} "$@"
 }
 
 # --- CLI parse (sourced by tests/test_cli.bats) ---
@@ -680,12 +693,34 @@ UNLEASH_RESUME=0
 UNLEASH_INTENT_FLAG=0
 UNLEASH_ALLOW_WEAK=0
 UNLEASH_USERNAME=""
+UNLEASH_PASSWORD=""
 UNLEASH_PASSWORD_FILE=""
 UNLEASH_FV_PASSWORD_FILE=""
 UNLEASH_FV_KEY_FILE=""
 UNLEASH_SNAPSHOT=""
+UNLEASH_REALNAME=""
+UNLEASH_WEBHOOK=""
+UNLEASH_BRIEF=0
+UNLEASH_MANIFEST=""
+UNLEASH_OUTPUT=""
+UNLEASH_PORT=""
+UNLEASH_INTERFACE=""
 UNLEASH_CMD=""
 UNLEASH_POSITIONAL=()
+
+# $1=flag $2=argc $3=next token (may be unset). Do not read $2 in the caller first.
+require_flag_value() {
+	if [ "$2" -lt 2 ]; then
+		echo "Missing value for $1" >&2
+		exit 1
+	fi
+	case "${3-}" in
+		--*)
+			echo "Missing value for $1" >&2
+			exit 1
+			;;
+	esac
+}
 
 # Mutates UNLEASH_* from flags after the command. Leftovers → UNLEASH_POSITIONAL.
 parse_flags() {
@@ -697,31 +732,44 @@ parse_flags() {
 			--yes)        UNLEASH_YES=1; shift ;;
 			--json)       UNLEASH_JSON=1; shift ;;
 			--verbose)    UNLEASH_VERBOSE=1; shift ;;
+			--brief)      UNLEASH_BRIEF=1; shift ;;
 			--log-file)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_LOG_FILE="$2"
 				shift 2
 				;;
 			--volume)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_VOLUME="$2"
 				shift 2
 				;;
 			--username)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_USERNAME="$2"
 				shift 2
 				;;
+			--password)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_PASSWORD="$2"
+				shift 2
+				;;
 			--password-file)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_PASSWORD_FILE="$2"
 				shift 2
 				;;
 			--fv-password-file)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_FV_PASSWORD_FILE="$2"
 				shift 2
 				;;
 			--fv-recovery-key-file)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_FV_KEY_FILE="$2"
 				shift 2
 				;;
 			--firewall-mode)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_FIREWALL_MODE="$2"
 				shift 2
 				;;
@@ -730,7 +778,38 @@ parse_flags() {
 				shift
 				;;
 			--snapshot)
+				require_flag_value "$1" $# "${2-}"
 				UNLEASH_SNAPSHOT="$2"
+				shift 2
+				;;
+			--realname)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_REALNAME="$2"
+				shift 2
+				;;
+			--webhook)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_WEBHOOK="$2"
+				shift 2
+				;;
+			--manifest)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_MANIFEST="$2"
+				shift 2
+				;;
+			--output)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_OUTPUT="$2"
+				shift 2
+				;;
+			--port)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_PORT="$2"
+				shift 2
+				;;
+			--interface)
+				require_flag_value "$1" $# "${2-}"
+				UNLEASH_INTERFACE="$2"
 				shift 2
 				;;
 			--allow-weak-password) UNLEASH_ALLOW_WEAK=1; shift ;;
@@ -837,7 +916,17 @@ main() {
 		demo)             run_demo ;;
 		update|up)        do_self_update ;;
 		uninstall|uni)    do_uninstall ;;
-		report)           generate_report "${2:-}" "${3:-}" ;;
+		report)
+			if [ "${UNLEASH_JSON:-0}" = 1 ]; then
+				generate_report --json
+			elif [ "${UNLEASH_BRIEF:-0}" = 1 ]; then
+				generate_report --brief
+			elif [ -n "${UNLEASH_OUTPUT:-}" ]; then
+				generate_report --output "$UNLEASH_OUTPUT"
+			else
+				generate_report "${2:-}" "${3:-}"
+			fi
+			;;
 		config)           cmd_config "$@" ;;
 		vpn-kill|vk)      vpn_kill_install "$@" ;;
 		vpn-kill-remove|vkr) vpn_kill_remove ;;
@@ -851,7 +940,13 @@ main() {
 		tui|interactive)  launch_tui ;;
 		fleet-apply)      cmd_fleet_apply "$@" ;;
 		upgrade-os)       cmd_upgrade_os ;;
-		web)              cmd_web_server "${2:-8080}" ;;
+		web)
+			if [ -n "${UNLEASH_PORT:-}" ]; then
+				cmd_web_server "$UNLEASH_PORT"
+			else
+				cmd_web_server "${2:-8080}"
+			fi
+			;;
 		web-stop)         cmd_web_stop ;;
 		reinstall|rei)
 			do_uninstall

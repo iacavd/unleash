@@ -26,3 +26,9 @@ teardown() {
   run deep_status_json 2>/dev/null || true
   echo "$output" | grep -q "}"
 }
+
+@test "deep_status uses UNLEASH_JSON without argv --json" {
+  UNLEASH_JSON=1
+  run deep_status 2>/dev/null || true
+  echo "$output" | grep -q "}"
+}

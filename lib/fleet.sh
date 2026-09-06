@@ -5,7 +5,7 @@
 set -euo pipefail
 
 cmd_fleet_apply() {
-  local manifest_file=""
+  local manifest_file="${UNLEASH_MANIFEST:-}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in

@@ -2,18 +2,25 @@ generate_report() {
   local mode="${1:-}"
   local output_file=""
 
-  # Parse flags
-  case "$mode" in
-    --json) generate_report_json; return ;;
-    --brief) generate_report_brief; return ;;
-    --output)
+  if [ "$mode" = "--json" ] || [ "${UNLEASH_JSON:-0}" = 1 ]; then
+    generate_report_json
+    return
+  fi
+  if [ "$mode" = "--brief" ] || [ "${UNLEASH_BRIEF:-0}" = 1 ]; then
+    generate_report_brief
+    return
+  fi
+  if [ "$mode" = "--output" ] || [ -n "${UNLEASH_OUTPUT:-}" ]; then
+    if [ "$mode" = "--output" ]; then
       output_file="${2:-unleash-report.md}"
-      generate_report_full | tee "$output_file"
-      success "Report saved to $output_file"
-      return
-      ;;
-    *) generate_report_full ;;
-  esac
+    else
+      output_file="$UNLEASH_OUTPUT"
+    fi
+    generate_report_full | tee "$output_file"
+    success "Report saved to $output_file"
+    return
+  fi
+  generate_report_full
 }
 
 generate_report_brief() {
