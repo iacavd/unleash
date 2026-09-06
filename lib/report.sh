@@ -172,8 +172,8 @@ generate_report_full() {
   echo -e "${CYAN}─── Backup Status ──────────────────────────────────────────${NC}"
   if has_backup; then
     local backup_count=0
-    if [ -d "$BACKUP_DIR" ]; then
-      backup_count=$(ls -1d "$BACKUP_DIR"/????-??-??_??-??-?? 2>/dev/null | wc -l | tr -d ' ')
+    if [ -d "$(_snapshot_root)" ]; then
+      backup_count=$(ls -1d "$(_snapshot_root)"/????-??-??_??-??-?? 2>/dev/null | wc -l | tr -d ' ')
     fi
     echo -e "  ${GRN}Backups available: $backup_count${NC}"
   else
@@ -317,8 +317,8 @@ generate_report_json() {
   report="${report}  \"hosts_blocked\": $hosts_blocked,\n"
 
   local backup_count=0
-  if [ -d "$BACKUP_DIR" ]; then
-    backup_count=$(ls -1d "$BACKUP_DIR"/????-??-??_??-??-?? 2>/dev/null | wc -l | tr -d ' ')
+  if [ -d "$(_snapshot_root)" ]; then
+    backup_count=$(ls -1d "$(_snapshot_root)"/????-??-??_??-??-?? 2>/dev/null | wc -l | tr -d ' ')
   fi
   report="${report}  \"backup_count\": $backup_count\n"
 

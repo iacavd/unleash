@@ -63,7 +63,7 @@ check_mdm_status() {
 
 	step "Backup status"
 	if has_backup; then
-		echo -e "  ${GRN}Backup exists:${NC} $(cat "$BACKUP_DIR/timestamp")"
+		echo -e "  ${GRN}Backup exists:${NC} $(cat "$(_snapshot_root)/timestamp" 2>/dev/null || echo yes)"
 	else
 		echo -e "  ${YEL}No backup${NC}"
 	fi
