@@ -33,6 +33,40 @@ harden_live_os() {
 		fi
 	done
 
+	step "Resetting DEP cloud configuration markers..."
+	local cfg="/private/var/db/ConfigurationProfiles/Settings"
+	if [ -d "$cfg" ] || [ -f "$cfg/.cloudConfigRecordFound" ]; then
+		sudo rm -f "$cfg/.cloudConfigHasActivationRecord" \
+		      "$cfg/.cloudConfigRecordFound" \
+		      "$cfg/.cloudConfigTimerCheck" \
+		      "$cfg/.cloudConfigProfileInstalled" \
+		      "$cfg/com.apple.mdm.depnag.plist" \
+		      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
+		sudo touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
+		success "DEP cached records cleared; bypass markers set"
+	else
+		info "No DEP configuration markers found"
+	fi
+
+	step "Disabling enrollment daemons in launchd overrides..."
+	local ldp="/private/var/db/com.apple.xpc.launchd/disabled.plist"
+	local pb="/usr/libexec/PlistBuddy"
+	if [ -x "$pb" ]; then
+		sudo mkdir -p "$(dirname "$ldp")" 2>/dev/null || true
+		if [ ! -f "$ldp" ]; then
+			printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' | sudo tee "$ldp" >/dev/null 2>&1 || true
+		fi
+		for label in \
+			com.apple.ManagedClient.enroll \
+			com.apple.ManagedClient.cloudConfiguration \
+			com.apple.mdmclient.daemon.runatboot \
+			com.apple.activationd; do
+			sudo "$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
+				|| sudo "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
+		done
+		success "Enrollment daemons disabled in launchd overrides"
+	fi
+
 	step "Removing residual MDM profiles..."
 	if command -v profiles &>/dev/null; then
 		local installed
