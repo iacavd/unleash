@@ -29,19 +29,25 @@ if [ "\$1" = "-f" ]; then
   shift 2
 fi
 cmd="\${2-}"
-uid="\${5-}"
 userpath="\${3-}"
+attr="\${4-}"
+val="\${5-}"
 case "\$cmd" in
-  -search)
+  -list)
     case "$mode" in
+      fail)
+        exit 1
+        ;;
       taken501)
-        if [ "\$uid" = "501" ]; then
-          echo "nobody UniqueID 501"
-        fi
+        echo "nobody 501"
         exit 0
         ;;
       full)
-        echo "nobody UniqueID \$uid"
+        i=501
+        while [ "\$i" -lt 600 ]; do
+          echo "u\$i \$i"
+          i=\$((i + 1))
+        done
         exit 0
         ;;
       *)
@@ -54,6 +60,10 @@ case "\$cmd" in
       exit 1
     fi
     if [ -f "$DSCL_BIN/users" ] && grep -qx "\$userpath" "$DSCL_BIN/users"; then
+      if [ "\$attr" = "UniqueID" ]; then
+        echo "UniqueID: \$(cat "$DSCL_BIN/uid" 2>/dev/null || echo 501)"
+        exit 0
+      fi
       echo "RecordName: mock"
       exit 0
     fi
@@ -61,9 +71,19 @@ case "\$cmd" in
     ;;
   -create)
     echo "\$userpath" >> "$DSCL_BIN/users"
+    if [ "\$attr" = "UniqueID" ]; then
+      if [ "$mode" = "create_nuid" ]; then
+        exit 1
+      fi
+      echo "\$val" > "$DSCL_BIN/uid"
+    fi
     exit 0
     ;;
-  -passwd|-append|-delete)
+  -passwd)
+    cat > "$DSCL_BIN/passwd.stdin" || true
+    exit 0
+    ;;
+  -append|-delete)
     exit 0
     ;;
 esac
@@ -137,8 +157,37 @@ EOF
   rm -f "$err" "$out"
 }
 
+@test "find_available_uid fails closed when dscl list exits 1" {
+  _install_dscl_mock fail
+  local node
+  node=$(dscl_node "$TEST_DIR")
+  err=$(mktemp)
+  out=$(mktemp)
+  rc=0
+  find_available_uid "$node" >"$out" 2>"$err" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ ! -s "$out" ]
+  [ "$RESULT_STATUS" = "fail" ]
+  [ "$RESULT_REASON" = "E_DSCL_FAIL" ]
+  if grep -q 501 "$out"; then
+    rm -f "$err" "$out"
+    false
+  fi
+  rm -f "$err" "$out"
+}
+
 @test "create_admin_user fails E_DSCL_FAIL if user missing after create" {
   _install_dscl_mock create_missing
+  node=$(dscl_node "$TEST_DIR")
+  rc=0
+  create_admin_user "$node" "$TEST_DIR" "alice" "Alice" "goodpass" "502" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$RESULT_STATUS" = "fail" ]
+  [ "$RESULT_REASON" = "E_DSCL_FAIL" ]
+}
+
+@test "create_admin_user fails E_DSCL_FAIL if UniqueID create fails" {
+  _install_dscl_mock create_nuid
   node=$(dscl_node "$TEST_DIR")
   rc=0
   create_admin_user "$node" "$TEST_DIR" "alice" "Alice" "goodpass" "502" || rc=$?
@@ -157,17 +206,24 @@ EOF
   [ -d "$TEST_DIR/Users/alice" ]
 }
 
-@test "add_to_filevault unattended skips with S_FV_ADD and does not put password on argv" {
+@test "create_admin_user does not put password on dscl argv" {
+  _install_dscl_mock create_ok
+  node=$(dscl_node "$TEST_DIR")
+  create_admin_user "$node" "$TEST_DIR" "alice" "Alice" "s3cret-pass" "502"
+  [ "$RESULT_STATUS" = "ok" ]
+  if grep -q "s3cret-pass" "$DSCL_BIN/dscl.args"; then
+    false
+  fi
+  grep -q "s3cret-pass" "$DSCL_BIN/passwd.stdin"
+}
+
+@test "add_to_filevault unattended skips with S_FV_ADD immediately" {
   UNLEASH_UNATTENDED=1
-  _install_fde_mock 1
+  _install_fde_mock 0
   add_to_filevault "alice" "s3cret-pass"
   [ "$RESULT_STATUS" = "skip" ]
   [ "$RESULT_REASON" = "S_FV_ADD" ]
-  [ -f "$DSCL_BIN/fde.args" ]
-  if grep -q "s3cret-pass" "$DSCL_BIN/fde.args"; then
-    false
-  fi
-  grep -q -- "-inputplist" "$DSCL_BIN/fde.args"
+  [ ! -f "$DSCL_BIN/fde.args" ]
 }
 
 @test "add_to_filevault unattended without password skips and does not claim success" {

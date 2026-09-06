@@ -146,7 +146,11 @@ _detect_unlock_stdin() {
 	chmod 600 "$file" 2>/dev/null || true
 	IFS= read -r line < "$file" || true
 	line="${line%$'\r'}"
-	printf '%s\n' "$line" | _detect_du apfs unlockVolume "$dev" -stdinpassphrase >/dev/null
+	# Here-doc is a redirect, not a pipe: unlockVolume's exit is this function's
+	# even without pipefail. Never put the secret on argv.
+	_detect_du apfs unlockVolume "$dev" -stdinpassphrase >/dev/null <<EOF
+${line}
+EOF
 }
 
 _detect_unlock() {

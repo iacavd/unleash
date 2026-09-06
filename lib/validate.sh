@@ -22,7 +22,7 @@ validate_password() {
 			warn validate password "weak default password allowed by --allow-weak-password"
 			return 0
 		fi
-		echo "Default password 1234 is not allowed" >&2
+		result_fail E_DEFAULT_PASSWORD validate password "default password 1234 is not allowed"
 		return 1
 	fi
 	[ ${#pw} -lt 8 ] && { echo "Minimum 8 characters" >&2; return 1; }
@@ -50,7 +50,9 @@ prompt_password() {
 	local var_name="$1"
 	local value
 	while true; do
-		read -p "Password: " value
+		# -s required: do not echo the secret. -r: keep backslashes.
+		read -r -s -p "Password: " value
+		printf '\n' >&2
 		if [ -z "$value" ]; then
 			echo "Password cannot be empty" >&2
 			continue
@@ -83,13 +85,11 @@ password_from_file() {
 		return 1
 	fi
 
-	if [ "$pw" = "1234" ] && [ "${UNLEASH_ALLOW_WEAK:-0}" != 1 ]; then
-		result_fail E_DEFAULT_PASSWORD validate password-file "password file is the default 1234"
-		return 1
-	fi
-
 	if ! validate_password "$pw"; then
-		result_fail E_CREDS_REQUIRED validate password-file "password does not meet policy"
+		# validate_password already set E_DEFAULT_PASSWORD for exact 1234.
+		if [ "${RESULT_REASON:-}" != "E_DEFAULT_PASSWORD" ]; then
+			result_fail E_CREDS_REQUIRED validate password-file "password does not meet policy"
+		fi
 		return 1
 	fi
 

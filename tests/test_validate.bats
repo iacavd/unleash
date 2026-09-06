@@ -67,9 +67,11 @@ teardown() {
 
 @test "validate_password rejects 1234 unless allow-weak" {
   UNLEASH_ALLOW_WEAK=0
-  run validate_password "1234"
-  [ "$status" -eq 1 ]
-  echo "$output" | grep -q "1234"
+  rc=0
+  validate_password "1234" || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$RESULT_STATUS" = "fail" ]
+  [ "$RESULT_REASON" = "E_DEFAULT_PASSWORD" ]
 }
 
 @test "validate_password accepts 1234 when UNLEASH_ALLOW_WEAK=1 and warns" {

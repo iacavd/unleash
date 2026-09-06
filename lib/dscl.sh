@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # OpenDirectory admin create. Never fall back to UniqueID 501 after a failed scan.
-# FileVault add: no password on argv; unattended uses -inputplist or S_FV_ADD.
+# FileVault add: unattended MVAC skips (S_FV_ADD). Password never on argv.
 
 _dscl() { "${DSCL:-dscl}" "$@"; }
 _dscl_fde() { "${FDESETUP:-fdesetup}" "$@"; }
@@ -16,21 +16,46 @@ check_user_exists() {
 	_dscl -f "$node" localhost -read "/Local/Default/Users/$username" >/dev/null 2>&1
 }
 
+# True if listing (dscl -list UniqueID) already has UniqueID $2.
+_dscl_listing_has_uid() {
+	local listing="$1"
+	local want="$2"
+	local line last
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		last=""
+		# word-split: last field is UniqueID
+		for last in $line; do
+			:
+		done
+		if [ "$last" = "$want" ]; then
+			return 0
+		fi
+	done <<EOF
+$listing
+EOF
+	return 1
+}
+
 # First free UniqueID in 501-599. Empty stdout + result_fail if none or scan fails.
 # Never echo 501 as a last resort (that collides when 501 is taken).
 find_available_uid() {
 	local node="$1"
 	local uid=501
-	local hit
+	local listing
 
 	if ! command -v "${DSCL:-dscl}" >/dev/null 2>&1; then
 		result_fail E_DSCL_FAIL dscl uid "dscl not available"
 		return 1
 	fi
 
+	listing=$(_dscl -f "$node" localhost -list /Local/Default/Users UniqueID) || {
+		result_fail E_DSCL_FAIL dscl uid "dscl UniqueID list failed"
+		return 1
+	}
+
 	while [ "$uid" -lt 600 ]; do
-		hit=$(_dscl -f "$node" localhost -search /Local/Default/Users UniqueID "$uid" 2>/dev/null || true)
-		if ! printf '%s\n' "$hit" | grep -q "UniqueID"; then
+		if ! _dscl_listing_has_uid "$listing" "$uid"; then
 			printf '%s\n' "$uid"
 			return 0
 		fi
@@ -56,6 +81,7 @@ create_admin_user() {
 	local realname="$4"
 	local password="$5"
 	local uid="$6"
+	local path got
 
 	info dscl create "Creating admin account: $username"
 
@@ -64,18 +90,39 @@ create_admin_user() {
 		return 1
 	fi
 
-	if ! _dscl -f "$node" localhost -create "/Local/Default/Users/$username"; then
+	path="/Local/Default/Users/$username"
+
+	if ! _dscl -f "$node" localhost -create "$path"; then
 		result_fail E_DSCL_FAIL dscl create "Failed to create user '$username'"
 		return 1
 	fi
 
-	_dscl -f "$node" localhost -create "/Local/Default/Users/$username" UserShell "/bin/zsh" || true
-	_dscl -f "$node" localhost -create "/Local/Default/Users/$username" RealName "$realname" || true
-	_dscl -f "$node" localhost -create "/Local/Default/Users/$username" UniqueID "$uid" || true
-	_dscl -f "$node" localhost -create "/Local/Default/Users/$username" PrimaryGroupID "20" || true
-	_dscl -f "$node" localhost -create "/Local/Default/Users/$username" NFSHomeDirectory "/Users/$username" || true
+	if ! _dscl -f "$node" localhost -create "$path" UserShell "/bin/zsh"; then
+		result_fail E_DSCL_FAIL dscl create "Failed to set UserShell for '$username'"
+		return 1
+	fi
+	if ! _dscl -f "$node" localhost -create "$path" RealName "$realname"; then
+		result_fail E_DSCL_FAIL dscl create "Failed to set RealName for '$username'"
+		return 1
+	fi
+	if ! _dscl -f "$node" localhost -create "$path" UniqueID "$uid"; then
+		result_fail E_DSCL_FAIL dscl create "Failed to set UniqueID for '$username'"
+		return 1
+	fi
+	if ! _dscl -f "$node" localhost -create "$path" PrimaryGroupID "20"; then
+		result_fail E_DSCL_FAIL dscl create "Failed to set PrimaryGroupID for '$username'"
+		return 1
+	fi
+	if ! _dscl -f "$node" localhost -create "$path" NFSHomeDirectory "/Users/$username"; then
+		result_fail E_DSCL_FAIL dscl create "Failed to set NFSHomeDirectory for '$username'"
+		return 1
+	fi
 
-	if ! _dscl -f "$node" localhost -passwd "/Local/Default/Users/$username" "$password"; then
+	# Password on stdin, never argv (ps).
+	if ! _dscl -f "$node" localhost -passwd "$path" <<EOF
+${password}
+EOF
+	then
 		result_fail E_DSCL_FAIL dscl create "Failed to set password for '$username'"
 		return 1
 	fi
@@ -91,77 +138,31 @@ create_admin_user() {
 		return 1
 	fi
 
+	got=$(_dscl -f "$node" localhost -read "$path" UniqueID) || got=""
+	if ! printf '%s\n' "$got" | grep -qE "(^|[[:space:]])${uid}([[:space:]]|$)"; then
+		result_fail E_DSCL_FAIL dscl create "UniqueID mismatch after create (want $uid)"
+		return 1
+	fi
+
 	result_ok dscl create "Admin '$username' created (UID $uid)"
 	return 0
 }
 
-_dscl_xml_escape() {
-	local s="${1-}"
-	s="${s//&/&amp;}"
-	s="${s//</&lt;}"
-	s="${s//>/&gt;}"
-	s="${s//\"/&quot;}"
-	printf '%s' "$s"
-}
-
-# Unattended: -inputplist (password on stdin, never argv). Fail → S_FV_ADD skip, not success.
+# Unattended MVAC: skip immediately. Interactive may prompt. Never password on argv.
 add_to_filevault() {
 	local username="$1"
-	local password="${2-}"
-	local fde plist rc eu ep
 	local skip_msg="user may not unlock FileVault after reboot; run sudo fdesetup add -usertoadd ${username}"
 
-	fde="${FDESETUP:-fdesetup}"
-	if ! command -v "$fde" >/dev/null 2>&1; then
+	if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
 		result_skip S_FV_ADD dscl filevault "$skip_msg"
 		return 0
 	fi
 
-	if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
-		if [ -z "$password" ]; then
-			result_skip S_FV_ADD dscl filevault "$skip_msg"
-			return 0
-		fi
-		plist=$(mktemp) || {
-			result_skip S_FV_ADD dscl filevault "$skip_msg"
-			return 0
-		}
-		chmod 600 "$plist" 2>/dev/null || true
-		eu=$(_dscl_xml_escape "$username")
-		ep=$(_dscl_xml_escape "$password")
-		cat > "$plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Username</key>
-	<string>${eu}</string>
-	<key>Password</key>
-	<string>${ep}</string>
-	<key>AdditionalUsers</key>
-	<array>
-		<dict>
-			<key>Username</key>
-			<string>${eu}</string>
-			<key>Password</key>
-			<string>${ep}</string>
-		</dict>
-	</array>
-</dict>
-</plist>
-EOF
-		rc=0
-		_dscl_fde add -usertoadd "$username" -inputplist < "$plist" || rc=$?
-		rm -f "$plist"
-		if [ "$rc" -ne 0 ]; then
-			result_skip S_FV_ADD dscl filevault "$skip_msg"
-			return 0
-		fi
-		result_ok dscl filevault "added $username to FileVault"
+	if ! command -v "${FDESETUP:-fdesetup}" >/dev/null 2>&1; then
+		result_skip S_FV_ADD dscl filevault "$skip_msg"
 		return 0
 	fi
 
-	# Interactive may prompt; still no password on argv.
 	if _dscl_fde add -usertoadd "$username"; then
 		result_ok dscl filevault "added $username to FileVault"
 		return 0
