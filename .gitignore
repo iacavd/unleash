@@ -7,3 +7,14 @@ unleash-standalone.sh
 .vercel
 node_modules/
 *.asc
+
+# Test artifacts and escape sequence output files
+*STP*
+*INF*
+*OK*
+*ERR*
+*WRN*
+utput=xml.plist
+*.backup.*
+*.tmp
+tmp.*
