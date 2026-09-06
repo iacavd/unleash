@@ -39,8 +39,16 @@ create_admin_user() {
 
 	info "Creating admin account: $username"
 
-	dscl -f "$node" localhost -create "/Local/Default/Users/$username" 2>/dev/null \
-		|| error_exit "Failed to create user"
+	if check_user_exists "$node" "$username"; then
+		error_exit "User account '$username' already exists on target OpenDirectory node ($node). Use a different username or remove the existing user record first."
+	fi
+
+	local err_out
+	err_out=$(dscl -f "$node" localhost -create "/Local/Default/Users/$username" 2>&1 || true)
+	if [ -n "$err_out" ] && echo "$err_out" | grep -qi "error"; then
+		error_exit "Failed to create user '$username' via dscl: $err_out"
+	fi
+
 	dscl -f "$node" localhost -create "/Local/Default/Users/$username" UserShell "/bin/zsh" 2>/dev/null
 	dscl -f "$node" localhost -create "/Local/Default/Users/$username" RealName "$realname" 2>/dev/null
 	dscl -f "$node" localhost -create "/Local/Default/Users/$username" UniqueID "$uid" 2>/dev/null
@@ -48,9 +56,9 @@ create_admin_user() {
 	dscl -f "$node" localhost -create "/Local/Default/Users/$username" NFSHomeDirectory "/Users/$username" 2>/dev/null
 
 	dscl -f "$node" localhost -passwd "/Local/Default/Users/$username" "$password" 2>/dev/null \
-		|| error_exit "Failed to set password"
+		|| error_exit "Failed to set password for '$username'"
 	dscl -f "$node" localhost -append "/Local/Default/Groups/admin" GroupMembership "$username" 2>/dev/null \
-		|| error_exit "Failed to grant admin"
+		|| error_exit "Failed to grant admin group membership to '$username'"
 
 	mkdir -p "$data_mount/Users/$username"
 	success "Admin '$username' created (UID $uid)"
