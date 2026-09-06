@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Unleash — Security & Defense Module
-# Provides security posture analysis, APNs push blocking, and profile quarantine.
+# Provides security posture analysis and profile quarantine.
+# APNs block/unblock is tombstoned: the old 17/8:443 rule must not be installable.
 
 set -euo pipefail
 
@@ -65,62 +66,13 @@ check_security_posture() {
   echo ""
 }
 
-# Block Apple Push Notification service (APNs) endpoints via PF Firewall
-block_apns() {
-  info "Installing APNs Push Notification Firewall Anchor..."
-
-  if [ "$(id -u)" -ne 0 ]; then
-    warn "Root privileges required to modify firewall anchors."
-    return 1
-  fi
-
-  mkdir -p /etc/pf.anchors
-  local apns_anchor="/etc/pf.anchors/com.unleash.apns"
-
-  cat << 'EOF' > "$apns_anchor"
-# Unleash APNs Block Anchor — Prevents remote MDM lock/wipe signals
-block drop out quick proto tcp to 17.0.0.0/8 port { 5223, 2195, 2196, 443 }
-block drop out quick proto tcp to courier.push.apple.com
-EOF
-
-  success "Created APNs anchor file at $apns_anchor"
-
-  # Include anchor in pf.conf if not present
-  if ! grep -q "com.unleash.apns" /etc/pf.conf 2>/dev/null; then
-    cat << 'EOF' >> /etc/pf.conf
-
-# UNLEASH_APNS_START
-anchor "com.unleash.apns"
-load anchor "com.unleash.apns" from "/etc/pf.anchors/com.unleash.apns"
-# UNLEASH_APNS_END
-EOF
-    success "Added APNs anchor declaration to /etc/pf.conf"
-  fi
-
-  pfctl -f /etc/pf.conf 2>/dev/null || true
-  pfctl -e 2>/dev/null || true
-  success "APNs Firewall Rule applied successfully."
+# Tombstone: refuse the old 17/8:443 drop. Narrow APNs is a later spec.
+_apns_removed() {
+  error_exit "ERROR: apns-block was removed. The old rule dropped TCP 443 to all of 17.0.0.0/8. Next: use firewall (selective) or firewall-broad."
 }
 
-# Unblock APNs
-unblock_apns() {
-  info "Removing APNs Push Notification Firewall Rules..."
-
-  if [ "$(id -u)" -ne 0 ]; then
-    warn "Root privileges required to modify firewall anchors."
-    return 1
-  fi
-
-  rm -f /etc/pf.anchors/com.unleash.apns
-
-  if [ -f /etc/pf.conf ]; then
-    sed -i '' '/# UNLEASH_APNS_START/,/# UNLEASH_APNS_END/d' /etc/pf.conf
-    sed -i '' '/com\.unleash\.apns/d' /etc/pf.conf
-  fi
-
-  pfctl -f /etc/pf.conf 2>/dev/null || true
-  success "APNs firewall rule removed successfully."
-}
+block_apns() { _apns_removed; }
+unblock_apns() { _apns_removed; }
 
 # Quarantine mobileconfig & configuration profile artifacts
 quarantine_profiles() {

@@ -28,6 +28,7 @@ trap 'on_err $LINENO' ERR
 
 show_cmd_help() {
 	case "$1" in
+		apply)      echo "Apply MDM suppression (same path as auto-all; pass --unattended for no prompts)." ;;
 		recovery)   echo "Auto-wipe DEP record and apply suppression (Recovery mode)." ;;
 		wipe-dep)   echo "Wipe DEP cloud configuration records from disk." ;;
 		bypass)     echo "Bypass MDM from Recovery. Creates admin user." ;;
@@ -73,6 +74,8 @@ show_cmd_help() {
 		vpn-kill-remove) echo "Remove VPN kill-switch." ;;
 		vpn-kill-status) echo "Check VPN kill-switch status." ;;
 		auto-all)   echo "Automated deployment: bypass+firewall+persist+monitor (no prompts)." ;;
+		apns-block) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
+		apns-unblock) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
 		version)    echo "Show version and exit." ;;
 		help)       show_help ;;
 		*)          show_help ;;
@@ -88,6 +91,7 @@ Bypass / suppress / monitor MDM enrollment on macOS.
   COMMANDS
 
   Core:
+    apply           Apply MDM suppression (flags after the command)
     recovery        Auto-wipe DEP record and apply suppression (Recovery mode)
     wipe-dep        Wipe DEP cloud configuration records from disk
     bypass          Full MDM bypass from Recovery (creates admin user)
@@ -110,8 +114,8 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     quarantine      Quarantine MDM mobileconfig payloads
 
   Security & Defense:
-    apns-block      Block Apple Push Notification endpoints (PF drop)
-    apns-unblock    Unblock Apple Push Notification endpoints
+    apns-block      Removed (old rule dropped TCP 443 to 17.0.0.0/8)
+    apns-unblock    Removed (see apns-block)
 
   Fleet & Automation:
     auto-all        Fully automated deployment (no prompts)
@@ -187,10 +191,24 @@ ALIASES
     vkr             vpn-kill-remove
     vks             vpn-kill-status
 
-OPTIONS
+OPTIONS (after the command: ./unleash apply --unattended)
     --verbose       Show debug messages
     --dry-run       Simulate without making changes
+    --yes           Assume yes for prompts
+    --json          Machine-readable stdout
+    --unattended    No prompts (auto-all implies this)
     --log-file <f>  Write logs to file (appended)
+    --volume <path> Target volume (spaces allowed)
+    --username <n>  Admin username
+    --password-file <f>          Password from file
+    --fv-password-file <f>       FileVault password file
+    --fv-recovery-key-file <f>   FileVault recovery key file
+    --firewall-mode <m>          selective|broad|off
+    --snapshot <id> Restore snapshot ID
+    --allow-weak-password        Allow short passwords
+    --create-admin  Create admin user
+    --harden        Live-OS harden during apply
+    --i-own-this-device          Intent flag
 
 Run without arguments for interactive menu.
 HELP
@@ -259,6 +277,7 @@ cmd_backup() {
 }
 
 cmd_restore() {
+	# Uses UNLEASH_SNAPSHOT when set (snapshot engine lands in a later PR).
 	header "Restore"
 	restore_state
 }
@@ -630,35 +649,161 @@ cmd_interactive_normal() {
 	done
 }
 
-parse_global_opts() {
-	local args=()
+# Thin wrapper until PR 8 pipeline_run. Same path as auto-all.
+# Re-feed parsed volume/username so existing cmd_auto_all still sees them.
+cmd_apply() {
+	if [ -n "$UNLEASH_USERNAME" ] && [ -n "$UNLEASH_VOLUME" ]; then
+		cmd_auto_all --username "$UNLEASH_USERNAME" --volume "$UNLEASH_VOLUME" "$@"
+	elif [ -n "$UNLEASH_USERNAME" ]; then
+		cmd_auto_all --username "$UNLEASH_USERNAME" "$@"
+	elif [ -n "$UNLEASH_VOLUME" ]; then
+		cmd_auto_all --volume "$UNLEASH_VOLUME" "$@"
+	else
+		cmd_auto_all "$@"
+	fi
+}
+
+# --- CLI parse (sourced by tests/test_cli.bats) ---
+# bash 3.2, no namerefs. All initialized for set -u.
+UNLEASH_UNATTENDED=0
+UNLEASH_DRY_RUN=0
+UNLEASH_YES=0
+UNLEASH_JSON=0
+UNLEASH_VERBOSE=0
+UNLEASH_LOG_FILE=""
+UNLEASH_VOLUME=""
+UNLEASH_CREATE_ADMIN=0
+UNLEASH_FIREWALL_MODE="selective"
+UNLEASH_HARDEN=0
+UNLEASH_PERSIST=1
+UNLEASH_RESUME=0
+UNLEASH_INTENT_FLAG=0
+UNLEASH_ALLOW_WEAK=0
+UNLEASH_USERNAME=""
+UNLEASH_PASSWORD_FILE=""
+UNLEASH_FV_PASSWORD_FILE=""
+UNLEASH_FV_KEY_FILE=""
+UNLEASH_SNAPSHOT=""
+UNLEASH_CMD=""
+UNLEASH_POSITIONAL=()
+
+# Mutates UNLEASH_* from flags after the command. Leftovers → UNLEASH_POSITIONAL.
+parse_flags() {
+	UNLEASH_POSITIONAL=()
 	while [ $# -gt 0 ]; do
 		case "$1" in
-			--verbose) VERBOSE=true; shift ;;
-			--dry-run) DRY_RUN=true; shift ;;
-			--log-file) LOG_FILE="${2:-}"; shift 2 ;;
-			*) args+=("$1"); shift ;;
+			--unattended) UNLEASH_UNATTENDED=1; shift ;;
+			--dry-run)    UNLEASH_DRY_RUN=1; shift ;;
+			--yes)        UNLEASH_YES=1; shift ;;
+			--json)       UNLEASH_JSON=1; shift ;;
+			--verbose)    UNLEASH_VERBOSE=1; shift ;;
+			--log-file)
+				UNLEASH_LOG_FILE="$2"
+				shift 2
+				;;
+			--volume)
+				UNLEASH_VOLUME="$2"
+				shift 2
+				;;
+			--username)
+				UNLEASH_USERNAME="$2"
+				shift 2
+				;;
+			--password-file)
+				UNLEASH_PASSWORD_FILE="$2"
+				shift 2
+				;;
+			--fv-password-file)
+				UNLEASH_FV_PASSWORD_FILE="$2"
+				shift 2
+				;;
+			--fv-recovery-key-file)
+				UNLEASH_FV_KEY_FILE="$2"
+				shift 2
+				;;
+			--firewall-mode)
+				UNLEASH_FIREWALL_MODE="$2"
+				shift 2
+				;;
+			--firewall-mode=*)
+				UNLEASH_FIREWALL_MODE="${1#--firewall-mode=}"
+				shift
+				;;
+			--snapshot)
+				UNLEASH_SNAPSHOT="$2"
+				shift 2
+				;;
+			--allow-weak-password) UNLEASH_ALLOW_WEAK=1; shift ;;
+			--create-admin) UNLEASH_CREATE_ADMIN=1; shift ;;
+			--harden)     UNLEASH_HARDEN=1; shift ;;
+			--i-own-this-device) UNLEASH_INTENT_FLAG=1; shift ;;
+			--help|-h)
+				show_cmd_help "${UNLEASH_CMD:-}"
+				exit 0
+				;;
+			--*)
+				echo "Unknown flag: $1" >&2
+				exit 1
+				;;
+			*)
+				break
+				;;
 		esac
 	done
-	set -- "${args[@]+"${args[@]}"}"
-	echo "$@"
+	UNLEASH_POSITIONAL=("$@")
 }
+
+# auto-all is unattended even without --unattended.
+apply_command_defaults() {
+	case "$1" in
+		auto-all) UNLEASH_UNATTENDED=1 ;;
+	esac
+}
+# --- end CLI parse ---
 
 main() {
 	load_config
-	eval "set -- $(parse_global_opts "$@")"
 
-	# Per-command help
-	if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
-		show_cmd_help "${1:-}"
+	if [ $# -eq 0 ]; then
+		if is_recovery; then
+			cmd_interactive_recovery
+		else
+			cmd_interactive_normal
+		fi
 		exit 0
 	fi
 
-	case "${1:-}" in
+	local cmd="$1"
+	shift
+	UNLEASH_CMD="$cmd"
+	parse_flags "$@"
+
+	[ "$UNLEASH_VERBOSE" = 1 ] && VERBOSE=true
+	[ "$UNLEASH_DRY_RUN" = 1 ] && DRY_RUN=true
+	if [ -n "$UNLEASH_LOG_FILE" ]; then
+		if type set_log_file >/dev/null 2>&1; then
+			set_log_file "$UNLEASH_LOG_FILE"
+		else
+			LOG_FILE="$UNLEASH_LOG_FILE"
+		fi
+	fi
+
+	apply_command_defaults "$cmd"
+
+	# Restore $1=cmd so existing helpers that read $2 still work.
+	if [ ${#UNLEASH_POSITIONAL[@]} -gt 0 ]; then
+		set -- "$cmd" "${UNLEASH_POSITIONAL[@]}"
+	else
+		set -- "$cmd"
+	fi
+
+	case "$cmd" in
+		apply)            cmd_apply "$@" ;;
+		auto-all)         cmd_apply "$@" ;;
 		recovery|rec|auto-recovery) cmd_recovery "${@}" ;;
-		wipe-dep|wipe)   cmd_wipe_dep "${@}" ;;
-		bypass|by)       cmd_bypass ;;
-		suppress|sv)     cmd_suppress ;;
+		wipe-dep|wipe)    cmd_wipe_dep "${@}" ;;
+		bypass|by)        cmd_bypass ;;
+		suppress|sv)      cmd_suppress ;;
 		heal)             cmd_heal ;;
 		persist)          cmd_persist ;;
 		unpersist)        cmd_unpersist ;;
@@ -677,28 +822,29 @@ main() {
 		history)          cmd_history ;;
 		history-clear)    cmd_history_clear ;;
 		test|dry-run)     cmd_test "$@" ;;
-		monitor|mn)           cmd_monitor "$@" ;;
+		monitor|mn)       cmd_monitor "$@" ;;
 		monitor-install|mn-install) install_monitor_launchdaemon "" ;;
 		monitor-uninstall|mn-uninstall) uninstall_monitor_launchdaemon "" ;;
 		monitor-stop|mn-stop) cmd_monitor_stop ;;
 		monitor-status|mn-st) cmd_monitor_status ;;
 		version|-v|--version) cmd_version ;;
-		doctor|doc)      cmd_doctor ;;
-		init)            cmd_init ;;
-		suggest)         cmd_suggest ;;
-		remediate)       cmd_remediate "${2:-}" ;;
-		predict)         cmd_predict "${2:-}" ;;
-		telemetry)       telemetry_opt_in "${2:-}" ;;
+		doctor|doc)       cmd_doctor ;;
+		init)             cmd_init ;;
+		suggest)          cmd_suggest ;;
+		remediate)        cmd_remediate "${2:-}" ;;
+		predict)          cmd_predict "${2:-}" ;;
+		telemetry)        telemetry_opt_in "${2:-}" ;;
 		demo)             run_demo ;;
 		update|up)        do_self_update ;;
 		uninstall|uni)    do_uninstall ;;
 		report)           generate_report "${2:-}" "${3:-}" ;;
 		config)           cmd_config "$@" ;;
 		vpn-kill|vk)      vpn_kill_install "$@" ;;
-		vpn-kill-remove|vkr)  vpn_kill_remove ;;
-		vpn-kill-status|vks)  vpn_kill_status ;;
-		apns-block)       block_apns ;;
-		apns-unblock)     unblock_apns ;;
+		vpn-kill-remove|vkr) vpn_kill_remove ;;
+		vpn-kill-status|vks) vpn_kill_status ;;
+		apns-block|apns-unblock)
+			error_exit "ERROR: apns-block was removed. The old rule dropped TCP 443 to all of 17.0.0.0/8. Next: use firewall (selective) or firewall-broad."
+			;;
 		quarantine)       quarantine_profiles "${2:-/}" ;;
 		webhook-test)     send_webhook_alert "${2:-generic}" "${3:-}" "${4:-Test message}" "${5:-Test Title}" ;;
 		simulate)         run_simulation "${2:-/}" ;;
@@ -707,7 +853,6 @@ main() {
 		upgrade-os)       cmd_upgrade_os ;;
 		web)              cmd_web_server "${2:-8080}" ;;
 		web-stop)         cmd_web_stop ;;
-		auto-all)         cmd_auto_all "$@" ;;
 		reinstall|rei)
 			do_uninstall
 			install_persist_launchdaemon ""
@@ -715,19 +860,12 @@ main() {
 			install_monitor_launchdaemon ""
 			success "Reinstall complete"
 			;;
-		discord-bot)          cmd_discord_bot_install "${2:-}" "${3:-}" ;;
-		discord-bot-stop)     cmd_discord_bot_stop ;;
-		discord-bot-status)   cmd_discord_bot_status ;;
+		discord-bot)      cmd_discord_bot_install "${2:-}" "${3:-}" ;;
+		discord-bot-stop) cmd_discord_bot_stop ;;
+		discord-bot-status) cmd_discord_bot_status ;;
 		help|-h|--help)   show_help; exit 0 ;;
-		"")
-			if is_recovery; then
-				cmd_interactive_recovery
-			else
-				cmd_interactive_normal
-			fi
-			;;
 		*)
-			echo -e "${RED}Unknown: $1${NC}" >&2
+			echo -e "${RED}Unknown: $cmd${NC}" >&2
 			show_help >&2
 			exit 1
 			;;
