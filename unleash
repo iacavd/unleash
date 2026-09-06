@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -eEuo pipefail
 
 VERSION="2.0.0"
 
@@ -18,10 +18,10 @@ done
 
 # error_exit (lib/colors.sh) stays exit 1 for usage/unhandled abort.
 # Process exits are 0, 1, 2, 3, 4 only — matrix in lib/result.sh.
+# Do not call log() here: an unwritable LOG_FILE would error_exit inside the trap.
 on_err() {
-	local line="$1"
-	log ERROR unleash trap "unhandled error at line $line" || true
-	# Later PRs write op=ABORT if a lock is held. Must return 0 so ERR cannot recurse.
+	local line="${1:-?}"
+	printf 'level=error module=unleash event=trap msg=unhandled error at line %s\n' "$line" >&2 || true
 	return 0
 }
 trap 'on_err $LINENO' ERR

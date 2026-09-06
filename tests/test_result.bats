@@ -47,6 +47,17 @@ setup() {
   [ "$got" = "$expected" ]
 }
 
+@test "json_escape maps CR and tab" {
+  input=$(printf 'a\tb\rc')
+  got=$(json_escape "$input")
+  [ "$got" = 'a\tb\rc' ]
+}
+
+@test "json_escape has no trailing newline" {
+  got=$(json_escape "x"; printf X)
+  [ "$got" = "xX" ]
+}
+
 @test "emit_json is valid JSON with spacey volume and quoted next" {
   if ! command -v python3 >/dev/null 2>&1; then
     skip "python3 not available"
@@ -83,4 +94,32 @@ assert obj["ok"] is False
 @test "json_escape writes escaped string to stdout" {
   got=$(json_escape 'say "hi"' 2>/dev/null)
   [ "$got" = 'say \"hi\"' ]
+}
+
+@test "ERR trap under set -E invokes on_err without recurse" {
+  local script
+  script=$(mktemp)
+  {
+    echo 'set -eEuo pipefail'
+    echo 'LOG_FILE="/no/such/unleash-trap-log-$$/app.log"'
+    sed -n '/^on_err()/,/^}/p' "$BATS_TEST_DIRNAME/../unleash"
+    cat <<'EOF'
+trap 'on_err $LINENO' ERR
+boom() { false; }
+boom
+echo SHOULD_NOT_REACH
+EOF
+  } > "$script"
+  run bash "$script"
+  rm -f "$script"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "unhandled error at line"
+  count=$(printf '%s\n' "$output" | grep -c "unhandled error at line" || true)
+  [ "$count" -eq 1 ]
+  if echo "$output" | grep -q E_LOG_UNWRITABLE; then
+    false
+  fi
+  if echo "$output" | grep -q SHOULD_NOT_REACH; then
+    false
+  fi
 }

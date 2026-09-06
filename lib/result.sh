@@ -1,14 +1,15 @@
 # shellcheck shell=bash
 # Typed results: helpers always return 0 so set -e cannot abort on skip.
-# Status is RESULT_* globals. Do not return 10/20 from sourced helpers.
+# Status is RESULT_* globals.
 #
-# Process exits 0, 1, 2, 3, 4 only (no function-level 10/20):
+# Process exits 0, 1, 2, 3, 4 only:
 #   0  all required ok, or skip-class that does not degrade
 #      (S_ALREADY_OK, S_FV_ADD, S_PF_RECOVERY, S_NO_PROFILES_CMD, S_NO_DSCACHEUTIL)
 #   1  usage / error_exit / rollback after required mutate fail
+#      (error_exit stays 1; E_LOG_UNWRITABLE is exit 1)
 #   2  preflight, no mutation
 #      (E_VOLUME_*, E_FV_*, E_CREDS_REQUIRED, E_DEFAULT_PASSWORD, E_INTENT_MISSING,
-#       E_DISK_FULL, E_PREFLIGHT_TOOLS, E_NOT_ROOT, E_LOCKED, E_LOG_UNWRITABLE)
+#       E_DISK_FULL, E_PREFLIGHT_TOOLS, E_NOT_ROOT, E_LOCKED)
 #   3  degraded after some mutation (S_SIP_LIVE, E_PFCTL_FAIL after hosts ok, …)
 #   4  mutate ok but probes fail
 # error_exit (lib/colors.sh) remains exit 1 for usage/unhandled abort.
