@@ -6,7 +6,7 @@ VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
+for _lib in colors result config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
 	_lib_path="$LIB_DIR/$_lib.sh"
 	if [ -f "$_lib_path" ]; then
 		source "$_lib_path"
@@ -15,6 +15,16 @@ for _lib in colors config detect validate dscl suppress backup status heal firew
 		exit 1
 	fi
 done
+
+# error_exit (lib/colors.sh) stays exit 1 for usage/unhandled abort.
+# Process exits are 0, 1, 2, 3, 4 only — matrix in lib/result.sh.
+on_err() {
+	local line="$1"
+	log ERROR unleash trap "unhandled error at line $line" || true
+	# Later PRs write op=ABORT if a lock is held. Must return 0 so ERR cannot recurse.
+	return 0
+}
+trap 'on_err $LINENO' ERR
 
 show_cmd_help() {
 	case "$1" in
