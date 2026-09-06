@@ -19,7 +19,7 @@ cmd_predict() {
   step "Looking up: $serial"
 
   local serial_prefix
-  serial_prefix=$(echo "$serial" | head -c 4)
+  serial_prefix=$(echo "$serial" | head -c 3)
 
   info "Serial prefix: $serial_prefix"
 

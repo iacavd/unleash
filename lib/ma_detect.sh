@@ -16,7 +16,7 @@ detect_configurator_enrollment() {
   local indicators=0
 
   # Configurator enrollment flag
-  if [ -f "$sys_dir/ConfigurationProflements/Setup/.configuratorEnrollment" ]; then
+  if [ -f "$sys_dir/ConfigurationProfiles/Setup/.configuratorEnrollment" ]; then
     echo -e "${YEL}⚠ Apple Configurator enrollment detected${NC}"
     indicators=$((indicators + 1))
   fi
@@ -31,7 +31,7 @@ detect_configurator_enrollment() {
   done
 
   # Enrollment challenge tokens
-  local challenge_dir="$sys_dir/ConfigurationProflements/Setup"
+  local challenge_dir="$sys_dir/ConfigurationProfiles/Setup"
   if [ -f "$challenge_dir/.configuratorEnrollment" ]; then
     echo -e "${YEL}  Configurator challenge present${NC}"
     indicators=$((indicators + 1))

@@ -1,5 +1,5 @@
 
-BACKUP_DIR="$(dirname "$(dirname "$0")")/.unleash-backup"
+BACKUP_DIR="${BACKUP_DIR:-${SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}}/.unleash-backup"
 BACKUP_RETENTION=5
 
 check_disk_space() {

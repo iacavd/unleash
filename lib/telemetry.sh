@@ -3,18 +3,22 @@ TELEMETRY_FILE="$HOME/.unleash-telemetry"
 
 telemetry_opt_in() {
   local val="${1:-}"
-  if [ "$val" = "yes" ] || [ "$val" = "true" ] || [ "$val" = "1" ]; then
-    echo "enabled" > "$TELEMETRY_FILE"
-    success "Telemetry enabled"
-  elif [ "$val" = "no" ] || [ "$val" = "false" ] || [ "$val" = "0" ]; then
-    rm -f "$TELEMETRY_FILE"
-    success "Telemetry disabled"
-  else
-    local current="disabled"
-    [ -f "$TELEMETRY_FILE" ] && current="enabled"
-    info "Telemetry: $current"
-    info "Usage: sudo ./unleash telemetry on|off"
-  fi
+  case "$val" in
+    on|yes|true|1|enable|enabled)
+      echo "enabled" > "$TELEMETRY_FILE"
+      success "Telemetry enabled"
+      ;;
+    off|no|false|0|disable|disabled)
+      rm -f "$TELEMETRY_FILE"
+      success "Telemetry disabled"
+      ;;
+    *)
+      local current="disabled"
+      [ -f "$TELEMETRY_FILE" ] && current="enabled"
+      info "Telemetry: $current"
+      info "Usage: sudo ./unleash telemetry on|off"
+      ;;
+  esac
 }
 
 telemetry_is_enabled() {

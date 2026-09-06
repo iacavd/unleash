@@ -79,9 +79,12 @@ do_uninstall() {
   fi
 
   begin "Removing backup directory"
-  local backup=".unleash-backup"
+  local backup="${BACKUP_DIR:-${SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}}/.unleash-backup"
   if [ -d "$backup" ]; then
     rm -rf "$backup" 2>/dev/null || true
+    end_ok
+  elif [ -d ".unleash-backup" ]; then
+    rm -rf ".unleash-backup" 2>/dev/null || true
     end_ok
   else
     end_fail; echo "     Not found"

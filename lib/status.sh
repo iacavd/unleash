@@ -246,9 +246,8 @@ deep_status_json() {
 	json="${json}  \"mdm_certificates\": $mdm_certs,\n"
 
 	local running_procs=0
-	running_procs=$(ps aux 2>/dev/null | grep -ciE "mdm|managedclient|activation" || true)
-	running_procs=$((running_procs - 1))
-	[ "$running_procs" -lt 0 ] && running_procs=0
+	running_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+	running_procs="${running_procs:-0}"
 	json="${json}  \"running_mdm_processes\": $running_procs,\n"
 
 	local risk="LOW"

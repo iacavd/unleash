@@ -6,11 +6,11 @@ set -euo pipefail
 launch_tui() {
   while true; do
     clear
-    echo -e "${COLOR_CYAN}"
+    echo -e "${CYAN}"
     echo "============================================================"
     echo "            🚀 UNLEASH — MACOS UTILITY DASHBOARD           "
     echo "============================================================"
-    echo -e "${COLOR_NC}"
+    echo -e "${NC}"
     echo "  1) Full System Security Audit (csrutil, FileVault, PF)"
     echo "  2) Dry-Run Simulation Mode (Non-Destructive Preview)"
     echo "  3) Selective Firewall Setup (Safe MDM IP Block)"
@@ -73,11 +73,11 @@ launch_tui() {
         read -rp "Press Enter to return to menu..."
         ;;
       10)
-        log_info "Exiting Unleash TUI."
+        info "Exiting Unleash TUI."
         break
         ;;
       *)
-        echo -e "${COLOR_RED}Invalid option.${COLOR_NC}"
+        echo -e "${RED}Invalid option.${NC}"
         sleep 1
         ;;
     esac

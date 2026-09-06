@@ -44,9 +44,8 @@ vpn_kill_install() {
   cat > "$VPN_RULES_FILE" << RULES
 # Unleash VPN kill-switch
 # Only allow MDM traffic through VPN interface $vpn_if
-block drop out proto {tcp,udp} to {17.0.0.0/8, 17.128.0.0/10}
-pass out proto {tcp,udp} to {17.0.0.0/8, 17.128.0.0/10} no state
-pass on $vpn_if
+block drop out quick proto {tcp,udp} to {17.0.0.0/8, 17.128.0.0/10}
+pass out quick on $vpn_if proto {tcp,udp} to {17.0.0.0/8, 17.128.0.0/10}
 RULES
   chmod 644 "$VPN_RULES_FILE"
   success "VPN kill-switch rules installed for $vpn_if"

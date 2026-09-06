@@ -20,27 +20,31 @@ cmd_discord_bot_install() {
 
   mkdir -p "$DISCORD_BOT_DIR"
 
-  cat > "$DISCORD_BOT_SCRIPT" <<- BOT
+  cat > "$DISCORD_BOT_SCRIPT" <<- 'BOT'
 #!/bin/bash
 # Unleash Discord Bot — monitors MDM and sends alerts
-TOKEN="$token"
-CHANNEL_ID="$channel_id"
+TOKEN="__TOKEN__"
+CHANNEL_ID="__CHANNEL_ID__"
+HOSTNAME="__HOSTNAME__"
 LAST_STATE=""
 while true; do
   STATE="clean"
   if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
     STATE="dirty"
   fi
-  if [ "\$STATE" != "\$LAST_STATE" ] && [ "\$STATE" = "dirty" ]; then
-    curl -s -X POST "https://discord.com/api/v10/channels/\$CHANNEL_ID/messages" \
-      -H "Authorization: Bot \$TOKEN" \
+  if [ "$STATE" != "$LAST_STATE" ] && [ "$STATE" = "dirty" ]; then
+    curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
+      -H "Authorization: Bot $TOKEN" \
       -H "Content-Type: application/json" \
-      -d '{"content":"🚨 **Unleash Alert** — MDM enrollment detected on '"$(hostname)"'"}'
+      -d "{\"content\":\"🚨 **Unleash Alert** — MDM enrollment detected on ${HOSTNAME}\"}"
   fi
-  LAST_STATE="\$STATE"
+  LAST_STATE="$STATE"
   sleep 300
 done
 BOT
+  sed -i '' "s|__TOKEN__|$token|g" "$DISCORD_BOT_SCRIPT"
+  sed -i '' "s|__CHANNEL_ID__|$channel_id|g" "$DISCORD_BOT_SCRIPT"
+  sed -i '' "s|__HOSTNAME__|$(hostname)|g" "$DISCORD_BOT_SCRIPT"
   chmod +x "$DISCORD_BOT_SCRIPT"
 
   nohup bash "$DISCORD_BOT_SCRIPT" > /dev/null 2>&1 &
