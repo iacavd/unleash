@@ -1,5 +1,7 @@
+# shellcheck shell=bash
 
 PERSIST_SENTINEL=".unleash-persist-installed"
+PERSIST_LABEL="com.unleash.heal"
 
 heal_suppress() {
 	local data_mount="$1"
@@ -127,108 +129,258 @@ heal_suppress() {
 	success "MDM suppression restored successfully."
 }
 
-_persist_mount_root() {
-	local dm="$1"
-	if [ -z "$dm" ] || [ ! -d "$dm/Library" ]; then
-		echo ""
-	else
-		echo "$dm"
+# Optional $1 is DATA_ROOT for legacy callers; cmd_persist sets DATA_ROOT first.
+_persist_use_root() {
+	if [ $# -ge 1 ]; then
+		DATA_ROOT="$1"
 	fi
+}
+
+_persist_run_id() {
+	if [ -n "${JOURNAL_RUN:-}" ]; then
+		printf '%s\n' "$JOURNAL_RUN"
+	elif [ -n "${RUN_ID:-}" ]; then
+		printf '%s\n' "$RUN_ID"
+	else
+		printf '%s-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$$"
+	fi
+}
+
+_persist_cleanup_incomplete() {
+	local dir="$1"
+	local run="$2"
+	local marker="${dir}/state/created_by_run"
+	[ -f "$marker" ] || return 0
+	[ "$(cat "$marker")" = "$run" ] || return 0
+	rm -rf "$dir"
+}
+
+_persist_fail() {
+	local dir="$1"
+	local run="$2"
+	local msg="$3"
+	_persist_cleanup_incomplete "$dir" "$run"
+	result_fail E_PERSIST_PATH persist copy "$msg"
+	return 1
+}
+
+# launchctl only against the live system, never a Recovery/test DATA_ROOT.
+_persist_is_live_os() {
+	if type is_recovery >/dev/null 2>&1 && is_recovery; then
+		return 1
+	fi
+	[ -z "${DATA_ROOT:-}" ] || [ "$DATA_ROOT" = "/" ]
+}
+
+_persist_chmod_tree() {
+	local unleash_dir="$1"
+	local plist_path="$2"
+	local f
+	chmod 755 "$unleash_dir" "$unleash_dir/lib" "$unleash_dir/data" || return 1
+	chmod 700 "$unleash_dir/state" "$unleash_dir/logs" || return 1
+	chmod 755 "$unleash_dir/unleash" || return 1
+	for f in "$unleash_dir/lib/"*.sh; do
+		[ -f "$f" ] || continue
+		chmod 755 "$f" || return 1
+	done
+	for f in "$unleash_dir/state/"*; do
+		[ -f "$f" ] || continue
+		chmod 600 "$f" || return 1
+	done
+	for f in "$unleash_dir/logs/"*; do
+		[ -f "$f" ] || continue
+		chmod 600 "$f" || return 1
+	done
+	chmod 644 "$plist_path" || return 1
+	if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+		chown -R root:wheel "$unleash_dir" || return 1
+		chown root:wheel "$plist_path" || return 1
+	fi
+	return 0
 }
 
 is_persist_installed() {
-	local data_mount="${1:-}"
-	local root
-	root="$(_persist_mount_root "$data_mount")"
-	local plist_path="${root}/Library/LaunchDaemons/com.unleash.heal.plist"
-	local sentinel="${root}/Library/LaunchDaemons/${PERSIST_SENTINEL}"
+	_persist_use_root "$@"
+	local plist_path="${DATA_ROOT}/Library/LaunchDaemons/${PERSIST_LABEL}.plist"
+	local sentinel="${DATA_ROOT}/Library/LaunchDaemons/${PERSIST_SENTINEL}"
 	[ -f "$plist_path" ] && [ -f "$sentinel" ]
 }
 
-install_persist_launchdaemon() {
-	local data_mount="$1"
-	local root
-	root="$(_persist_mount_root "$data_mount")"
+persist_copy() {
+	_persist_use_root "$@"
 
-	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-	local unleash_src="$script_dir/unleash"
+	local script_dir="${SCRIPT_DIR:-}"
+	if [ -z "$script_dir" ]; then
+		script_dir="$(cd "$(dirname "$0")" && pwd)"
+	fi
+
+	local unleash_dir
+	unleash_dir=$(unleash_root)
+	local run_id
+	run_id=$(_persist_run_id)
+	local created=0
+	local plist_dir="${DATA_ROOT}/Library/LaunchDaemons"
+	local plist_path="${plist_dir}/${PERSIST_LABEL}.plist"
+	local sentinel="${plist_dir}/${PERSIST_SENTINEL}"
+	local src="${script_dir}/unleash"
+	local monitor_plist="${plist_dir}/com.unleash.monitor.plist"
 
 	step "Installing LaunchDaemon for boot-time persistence..."
 
-	local plist_dir="${root}/Library/LaunchDaemons"
-	local plist_path="${plist_dir}/com.unleash.heal.plist"
-	local sentinel="${plist_dir}/${PERSIST_SENTINEL}"
-
-	mkdir -p "$plist_dir" 2>/dev/null || true
-
-	if [ ! -w "$plist_dir" ]; then
-		warn "Cannot write to $plist_dir (requires root privileges)."
-		return 0
+	if [ ! -f "$src" ]; then
+		_persist_fail "$unleash_dir" "$run_id" "source binary missing: $src"
+		return 1
 	fi
 
-	cat > "$plist_path" <<- PLIST
-	<?xml version="1.0" encoding="UTF-8"?>
-	<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-	<plist version="1.0">
-	<dict>
-		<key>Label</key>
-		<string>com.unleash.heal</string>
-		<key>ProgramArguments</key>
-		<array>
-			<string>/bin/bash</string>
-			<string>-c</string>
-			<string>${unleash_src} heal</string>
-		</array>
-		<key>RunAtLoad</key>
-		<true/>
-		<key>StartInterval</key>
-		<integer>86400</integer>
-		<key>Nice</key>
-		<integer>1</integer>
-		<key>KeepAlive</key>
-		<false/>
-		<key>StandardOutPath</key>
-		<string>/var/log/unleash-heal.log</string>
-		<key>StandardErrorPath</key>
-		<string>/var/log/unleash-heal.err</string>
-	</dict>
-	</plist>
-	PLIST
+	[ -d "$unleash_dir" ] || created=1
 
-	chmod 644 "$plist_path"
-
-	# Write sentinel file for clean state tracking
-	echo "installed=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$sentinel"
-	echo "source=$unleash_src" >> "$sentinel"
-
-	success "LaunchDaemon written to $plist_path"
-
-	step "Loading LaunchDaemon..."
-	if command -v launchctl &>/dev/null; then
-		launchctl load "$plist_path" 2>/dev/null \
-			&& success "LaunchDaemon loaded (will run on next boot)" \
-			|| info "LaunchDaemon will load on next boot"
-	else
-		info "launchctl not available (expected in Recovery) — will load on next boot"
+	if ! mkdir -p "$unleash_dir/lib" "$unleash_dir/data" "$unleash_dir/logs" "$unleash_dir/state" "$plist_dir"; then
+		_persist_fail "$unleash_dir" "$run_id" "cannot create $unleash_dir"
+		return 1
 	fi
+
+	if [ "$created" = 1 ]; then
+		if ! printf '%s\n' "$run_id" > "$unleash_dir/state/created_by_run"; then
+			_persist_fail "$unleash_dir" "$run_id" "cannot write created_by_run marker"
+			return 1
+		fi
+	fi
+
+	if [ ! -w "$unleash_dir" ] || [ ! -w "$plist_dir" ]; then
+		_persist_fail "$unleash_dir" "$run_id" "not writable: $unleash_dir"
+		return 1
+	fi
+
+	if [ "$script_dir" != "$unleash_dir" ]; then
+		if ! cp "$src" "$unleash_dir/unleash"; then
+			_persist_fail "$unleash_dir" "$run_id" "cannot copy unleash binary"
+			return 1
+		fi
+		local lib copied_lib=0
+		for lib in "$script_dir/lib/"*.sh; do
+			[ -f "$lib" ] || continue
+			if ! cp "$lib" "$unleash_dir/lib/"; then
+				_persist_fail "$unleash_dir" "$run_id" "cannot copy $lib"
+				return 1
+			fi
+			copied_lib=1
+		done
+		if [ "$copied_lib" -eq 0 ]; then
+			_persist_fail "$unleash_dir" "$run_id" "no lib/*.sh to copy"
+			return 1
+		fi
+		local tsv
+		for tsv in mdm-ips.tsv mdm-agents.tsv; do
+			if [ -f "$script_dir/data/$tsv" ]; then
+				if ! cp "$script_dir/data/$tsv" "$unleash_dir/data/"; then
+					_persist_fail "$unleash_dir" "$run_id" "cannot copy data/$tsv"
+					return 1
+				fi
+			fi
+		done
+	fi
+
+	# ProgramArguments are always live paths; Recovery writes the file under $DATA.
+	if ! cat > "$plist_path" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.unleash.heal</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Library/Unleash/unleash</string>
+		<string>heal</string>
+		<string>--unattended</string>
+		<string>--log-file</string>
+		<string>/Library/Unleash/logs/heal.log</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>Nice</key>
+	<integer>1</integer>
+	<key>KeepAlive</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>/Library/Unleash/logs/heal.out</string>
+	<key>StandardErrorPath</key>
+	<string>/Library/Unleash/logs/heal.err</string>
+</dict>
+</plist>
+PLIST
+	then
+		_persist_fail "$unleash_dir" "$run_id" "cannot write plist $plist_path"
+		return 1
+	fi
+
+	if ! _persist_chmod_tree "$unleash_dir" "$plist_path"; then
+		_persist_fail "$unleash_dir" "$run_id" "chmod/chown failed"
+		return 1
+	fi
+
+	local sha
+	sha=$(${SHASUM:-/usr/bin/shasum} -a 256 "$unleash_dir/unleash" | awk '{print $1}')
+	if ! {
+		printf 'installed=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+		printf 'sha256=%s\n' "$sha"
+	} > "$sentinel"; then
+		_persist_fail "$unleash_dir" "$run_id" "cannot write sentinel"
+		return 1
+	fi
+
+	if _persist_is_live_os; then
+		local launchctl="${LAUNCHCTL:-/bin/launchctl}"
+		if [ -x "$launchctl" ]; then
+			"$launchctl" bootout system/com.unleash.heal >/dev/null 2>&1 || \
+				"$launchctl" unload "$plist_path" >/dev/null 2>&1 || true
+			"$launchctl" bootstrap system "$plist_path" >/dev/null 2>&1 || \
+				"$launchctl" load "$plist_path" >/dev/null 2>&1 || true
+			"$launchctl" bootout system/com.unleash.monitor >/dev/null 2>&1 || \
+				"$launchctl" unload "$monitor_plist" >/dev/null 2>&1 || true
+		fi
+	fi
+	rm -f "$monitor_plist"
+
+	result_ok persist copy "LaunchDaemon written to $plist_path"
+	return 0
+}
+
+install_persist_launchdaemon() {
+	persist_copy "$@"
 }
 
 remove_persist_launchdaemon() {
-	local data_mount="$1"
-	local root
-	root="$(_persist_mount_root "$data_mount")"
-	local plist_path="${root}/Library/LaunchDaemons/com.unleash.heal.plist"
-	local sentinel="${root}/Library/LaunchDaemons/${PERSIST_SENTINEL}"
+	_persist_use_root "$@"
+	local unleash_dir
+	unleash_dir=$(unleash_root)
+	local plist_dir="${DATA_ROOT}/Library/LaunchDaemons"
+	local plist_path="${plist_dir}/${PERSIST_LABEL}.plist"
+	local sentinel="${plist_dir}/${PERSIST_SENTINEL}"
+	local monitor_plist="${plist_dir}/com.unleash.monitor.plist"
 
-	if [ -f "$plist_path" ]; then
-		step "Removing Unleash LaunchDaemon..."
-		if command -v launchctl &>/dev/null; then
-			launchctl unload "$plist_path" 2>/dev/null || true
+	if _persist_is_live_os; then
+		local launchctl="${LAUNCHCTL:-/bin/launchctl}"
+		if [ -x "$launchctl" ]; then
+			"$launchctl" bootout system/com.unleash.heal >/dev/null 2>&1 || \
+				"$launchctl" unload "$plist_path" >/dev/null 2>&1 || true
+			"$launchctl" bootout system/com.unleash.monitor >/dev/null 2>&1 || \
+				"$launchctl" unload "$monitor_plist" >/dev/null 2>&1 || true
 		fi
-		rm -f "$plist_path"
-		rm -f "$sentinel"
+	fi
+
+	if [ -f "$plist_path" ] || [ -f "$sentinel" ]; then
+		step "Removing Unleash LaunchDaemon..."
+		rm -f "$plist_path" "$sentinel" "$monitor_plist"
 		success "LaunchDaemon removed"
 	else
 		info "No Unleash LaunchDaemon installed"
+		rm -f "$monitor_plist"
+	fi
+
+	if [ -d "$unleash_dir" ] && [ "$unleash_dir" != "${SCRIPT_DIR:-}" ]; then
+		rm -rf "$unleash_dir"
 	fi
 }

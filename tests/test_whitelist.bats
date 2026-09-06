@@ -2,9 +2,14 @@
 
 setup() {
   load '../lib/colors.sh'
+  load '../lib/result.sh'
+  load '../lib/detect.sh'
+  load '../lib/firewall.sh'
   load '../lib/whitelist.sh'
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   TEST_DIR=$(mktemp -d)
-  mkdir -p "$TEST_DIR/etc/pf.anchors"
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/etc/pf.anchors/com.unleash"
   mkdir -p "$TEST_DIR/private/etc"
 }
 
@@ -22,7 +27,6 @@ teardown() {
 }
 
 @test "_resolve_dns falls back to nslookup" {
-  # Force host to be unavailable
   function host() { return 1; }
   export -f host
   if ! command -v nslookup &>/dev/null; then
@@ -34,37 +38,13 @@ teardown() {
   unset -f host
 }
 
-@test "_resolve_dns uses hardcoded fallback for MDM domains" {
-  # Override all DNS tools to fail
+@test "_resolve_dns returns 1 for MDM domain when DNS tools fail (no hardcoded IPs)" {
   function host() { return 1; }
   function nslookup() { return 1; }
   function dig() { return 1; }
   export -f host nslookup dig
   run _resolve_dns "deviceenrollment.apple.com" "A"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"17."* ]]
-  unset -f host nslookup dig
-}
-
-@test "_resolve_dns hardcoded fallback for mdmenrollment" {
-  function host() { return 1; }
-  function nslookup() { return 1; }
-  function dig() { return 1; }
-  export -f host nslookup dig
-  run _resolve_dns "mdmenrollment.apple.com" "A"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"17."* ]]
-  unset -f host nslookup dig
-}
-
-@test "_resolve_dns hardcoded fallback for iprofiles" {
-  function host() { return 1; }
-  function nslookup() { return 1; }
-  function dig() { return 1; }
-  export -f host nslookup dig
-  run _resolve_dns "iprofiles.apple.com" "A"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"17."* ]]
+  [ "$status" -ne 0 ]
   unset -f host nslookup dig
 }
 
@@ -78,25 +58,27 @@ teardown() {
   unset -f host nslookup dig
 }
 
-@test "install_selective_block creates anchor file" {
+@test "install_selective_block is alias of selective firewall (com.unleash/mdm)" {
   install_selective_block "$TEST_DIR" 2>/dev/null || true
-  [ -f "$TEST_DIR/etc/pf.anchors/com.unleash.selective" ]
+  [ -f "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm" ]
+  [ ! -f "$TEST_DIR/etc/pf.anchors/com.unleash.selective" ]
+  [ ! -f "$TEST_DIR/private/etc/pf.anchors/com.unleash.selective" ]
 }
 
 @test "install_selective_block writes pf rules" {
   install_selective_block "$TEST_DIR" 2>/dev/null || true
-  run grep -c "block" "$TEST_DIR/etc/pf.anchors/com.unleash.selective"
+  run grep -c "block" "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
   [ "$output" -gt 0 ]
 }
 
-@test "install_selective_block creates pf.conf" {
+@test "install_selective_block creates pf.conf under private/etc" {
   install_selective_block "$TEST_DIR" 2>/dev/null || true
-  [ -f "$TEST_DIR/etc/pf.conf" ]
+  [ -f "$TEST_DIR/private/etc/pf.conf" ]
 }
 
 @test "install_selective_block is idempotent" {
   install_selective_block "$TEST_DIR" 2>/dev/null || true
   install_selective_block "$TEST_DIR" 2>/dev/null || true
-  run grep -c "com.unleash.selective" "$TEST_DIR/etc/pf.conf"
+  run grep -c "com.unleash" "$TEST_DIR/private/etc/pf.conf"
   [ "$output" -le 3 ]
 }

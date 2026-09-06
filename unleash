@@ -388,11 +388,13 @@ cmd_persist() {
 	local data_mount
 	if is_recovery; then
 		data_mount=$(resolve_data_volume)
+		DATA_ROOT="$data_mount"
 	else
 		if ! is_root; then
 			error_exit "Persistence needs sudo: sudo ./unleash persist"
 		fi
 		data_mount=""
+		DATA_ROOT=""
 	fi
 	install_persist_launchdaemon "$data_mount"
 }
@@ -401,8 +403,10 @@ cmd_unpersist() {
 	local data_mount
 	if is_recovery; then
 		data_mount=$(resolve_data_volume)
+		DATA_ROOT="$data_mount"
 	else
 		data_mount=""
+		DATA_ROOT=""
 	fi
 	remove_persist_launchdaemon "$data_mount"
 }
@@ -411,39 +415,45 @@ cmd_firewall() {
 	if ! is_root; then
 		error_exit "Firewall needs sudo: sudo ./unleash firewall"
 	fi
+	local data_mount
 	if is_recovery; then
-		local data_mount
 		data_mount=$(resolve_data_volume)
-		install_pf_mdm_block "$data_mount"
+		DATA_ROOT="$data_mount"
 	else
-		install_pf_mdm_block ""
+		data_mount=""
+		DATA_ROOT=""
 	fi
+	install_pf_mdm_block "$data_mount"
 }
 
 cmd_firewall_broad() {
 	if ! is_root; then
 		error_exit "Firewall needs sudo: sudo ./unleash firewall-broad"
 	fi
+	local data_mount
 	if is_recovery; then
-		local data_mount
 		data_mount=$(resolve_data_volume)
-		install_pf_mdm_block_broad "$data_mount"
+		DATA_ROOT="$data_mount"
 	else
-		install_pf_mdm_block_broad ""
+		data_mount=""
+		DATA_ROOT=""
 	fi
+	install_pf_mdm_block_broad "$data_mount"
 }
 
 cmd_firewall_off() {
 	if ! is_root; then
 		error_exit "Needs sudo: sudo ./unleash firewall-off"
 	fi
+	local data_mount
 	if is_recovery; then
-		local data_mount
 		data_mount=$(resolve_data_volume)
-		remove_pf_mdm_block "$data_mount"
+		DATA_ROOT="$data_mount"
 	else
-		remove_pf_mdm_block ""
+		data_mount=""
+		DATA_ROOT=""
 	fi
+	remove_pf_mdm_block "$data_mount"
 }
 
 cmd_harden() {
@@ -468,16 +478,7 @@ cmd_audit() {
 }
 
 cmd_whitelist() {
-	if ! is_root; then
-		error_exit "Whitelist needs sudo: sudo ./unleash whitelist"
-	fi
-	if is_recovery; then
-		local data_mount
-		data_mount=$(resolve_data_volume)
-		install_selective_block "$data_mount"
-	else
-		install_selective_block ""
-	fi
+	cmd_firewall "$@"
 }
 
 cmd_status() {
@@ -514,8 +515,8 @@ cmd_monitor() {
     DISCORD_WEBHOOK="$webhook"
   fi
   case "${1:-}" in
-    install)   install_monitor_launchdaemon "" ;;
-    uninstall) uninstall_monitor_launchdaemon "" ;;
+    install)   cmd_persist ;;
+    uninstall) cmd_unpersist ;;
     *)         monitor_mdm ;;
   esac
 }
@@ -932,8 +933,8 @@ main() {
 		history-clear)    cmd_history_clear ;;
 		test|dry-run)     cmd_test "$@" ;;
 		monitor|mn)       cmd_monitor "$@" ;;
-		monitor-install|mn-install) install_monitor_launchdaemon "" ;;
-		monitor-uninstall|mn-uninstall) uninstall_monitor_launchdaemon "" ;;
+		monitor-install|mn-install) cmd_persist ;;
+		monitor-uninstall|mn-uninstall) cmd_unpersist ;;
 		monitor-stop|mn-stop) cmd_monitor_stop ;;
 		monitor-status|mn-st) cmd_monitor_status ;;
 		version|-v|--version) cmd_version ;;
@@ -980,9 +981,8 @@ main() {
 		web-stop)         cmd_web_stop ;;
 		reinstall|rei)
 			do_uninstall
-			install_persist_launchdaemon ""
-			install_selective_block ""
-			install_monitor_launchdaemon ""
+			cmd_persist
+			cmd_firewall
 			success "Reinstall complete"
 			;;
 		discord-bot)      cmd_discord_bot_install "${2:-}" "${3:-}" ;;

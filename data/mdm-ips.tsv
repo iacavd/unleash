@@ -1,0 +1,8 @@
+# domain	ipv4	ipv6	retrieved_at
+# Stale TSV IPs can miss MDM; DNS is tried first.
+deviceenrollment.apple.com	17.253.34.253		2026-06-01
+deviceenrollment.apple.com	17.32.215.136		2026-06-01
+mdmenrollment.apple.com	17.253.34.254		2026-06-01
+mdmenrollment.apple.com	17.110.228.136		2026-06-01
+iprofiles.apple.com	17.253.34.252		2026-06-01
+iprofiles.apple.com	17.188.166.20		2026-06-01

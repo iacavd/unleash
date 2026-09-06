@@ -2,6 +2,7 @@
 
 setup() {
   load '../lib/colors.sh'
+  load '../lib/result.sh'
   load '../lib/config.sh'
   load '../lib/detect.sh'
   load '../lib/validate.sh'
@@ -41,8 +42,10 @@ teardown() {
 }
 
 @test "cmd_auto_all installs selective firewall" {
+  DATA_ROOT="$TEST_DIR"
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
   install_pf_mdm_block_selective "$TEST_DIR" 2>/dev/null || true
-  [ -f "$TEST_DIR/etc/pf.anchors/com.unleash/mdm" ]
+  [ -f "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm" ]
 }
 
 @test "cmd_auto_all installs persistence" {
