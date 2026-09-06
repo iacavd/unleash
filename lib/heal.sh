@@ -640,41 +640,43 @@ probe_processes() {
 	local root="${DATA_ROOT:-}"
 
 	if ! _probe_is_live_os; then
-		result_skip S_NO_PROFILES_CMD heal processes "process probe is live-OS only"
+		result_skip S_ALREADY_OK heal processes "process probe is live-OS only"
 		return 0
 	fi
 
 	tsv=$(_mdm_agents_tsv) || tsv=""
-	if [ -n "$tsv" ] && [ -f "$tsv" ]; then
-		while IFS=$'\t' read -r id pat bins glob || [ -n "$id" ]; do
-			case "$id" in
-				''|\#*) continue ;;
-			esac
-			[ -n "$pat" ] || continue
-			if command -v ps >/dev/null 2>&1; then
-				if ps aux 2>/dev/null | grep -i "$pat" | grep -v grep | grep -v unleash | grep -q .; then
-					result_fail E_VERIFY_FAIL heal processes "third-party agent running: $id"
-					return 0
-				fi
-			fi
-			rest="$bins"
-			while [ -n "$rest" ]; do
-				case "$rest" in
-					*'|'*) tok="${rest%%|*}"; rest="${rest#*|}" ;;
-					*) tok="$rest"; rest="" ;;
-				esac
-				[ -n "$tok" ] || continue
-				if _probe_exists_glob "${root}${tok}"; then
-					result_fail E_VERIFY_FAIL heal processes "third-party binary present: $tok"
-					return 0
-				fi
-			done
-			if [ -n "$glob" ] && _probe_exists_glob "${root}${glob}"; then
-				result_fail E_VERIFY_FAIL heal processes "third-party launchd present: $glob"
+	if [ -z "$tsv" ] || [ ! -f "$tsv" ]; then
+		result_fail E_VERIFY_FAIL heal processes "mdm-agents.tsv missing on live OS"
+		return 0
+	fi
+	while IFS=$'\t' read -r id pat bins glob || [ -n "$id" ]; do
+		case "$id" in
+			''|\#*) continue ;;
+		esac
+		[ -n "$pat" ] || continue
+		if command -v ps >/dev/null 2>&1; then
+			if ps aux 2>/dev/null | grep -i "$pat" | grep -v grep | grep -v unleash | grep -q .; then
+				result_fail E_VERIFY_FAIL heal processes "third-party agent running: $id"
 				return 0
 			fi
-		done < "$tsv"
-	fi
+		fi
+		rest="$bins"
+		while [ -n "$rest" ]; do
+			case "$rest" in
+				*'|'*) tok="${rest%%|*}"; rest="${rest#*|}" ;;
+				*) tok="$rest"; rest="" ;;
+			esac
+			[ -n "$tok" ] || continue
+			if _probe_exists_glob "${root}${tok}"; then
+				result_fail E_VERIFY_FAIL heal processes "third-party binary present: $tok"
+				return 0
+			fi
+		done
+		if [ -n "$glob" ] && _probe_exists_glob "${root}${glob}"; then
+			result_fail E_VERIFY_FAIL heal processes "third-party launchd present: $glob"
+			return 0
+		fi
+	done < "$tsv"
 
 	if [ ! -x "$profiles" ]; then
 		result_skip S_NO_PROFILES_CMD heal processes "profiles command missing"
@@ -737,7 +739,48 @@ run_probes() {
 		return 0
 	fi
 	result_ok heal probes "required probes passed"
+	probes_write_last_good
 	return 0
+}
+
+# Clean pass only. Never replace last-good with a dirty snapshot.
+probes_write_last_good() {
+	[ "${RESULT_STATUS:-}" = "fail" ] && return 0
+	local volume="${PIPELINE_VOLUME:-${DATA_ROOT:-}}"
+	local name st reason
+	local lg=()
+	while IFS=$'\t' read -r name st reason || [ -n "$name" ]; do
+		[ -n "$name" ] || continue
+		if [ -n "$reason" ]; then
+			lg[${#lg[@]}]="probe=${name} status=${st} reason=${reason}"
+		else
+			lg[${#lg[@]}]="probe=${name} status=${st}"
+		fi
+	done <<EOF
+${PROBE_LINES}
+EOF
+	if type journal_last_good_write >/dev/null 2>&1; then
+		journal_last_good_write "$volume" "${lg[@]}"
+		return 0
+	fi
+	local dir dest tmp ts line
+	if type unleash_root >/dev/null 2>&1; then
+		dir="$(unleash_root)/state"
+	else
+		dir="${DATA_ROOT}/Library/Unleash/state"
+	fi
+	mkdir -p "$dir" || return 0
+	dest="$dir/last-good"
+	tmp="${dest}.tmp.$$"
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	{
+		printf 'ts=%s\n' "$ts"
+		printf 'volume=%s\n' "$volume"
+		for line in "${lg[@]}"; do
+			printf '%s\n' "$line"
+		done
+	} > "$tmp" || { rm -f "$tmp"; return 0; }
+	mv "$tmp" "$dest"
 }
 
 status_emit_json() {

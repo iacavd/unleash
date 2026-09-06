@@ -205,10 +205,22 @@ assert obj["exit"] == 2
 '
 }
 
-@test "./unleash status --json works with fixture volume" {
+@test "./unleash status --json dirty fixture is exit 3" {
   run "$UNLEASH" status --json --volume "$TEST_DIR"
-  [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+  [ "$status" -eq 3 ]
   echo "$output" | grep -q '{'
+  echo "$output" | grep -q 'probes'
+  ! echo "$output" | grep -q 'unhandled error'
+}
+
+@test "./unleash status --json planted fixture is exit 0" {
+  load '../lib/suppress.sh'
+  suppress_enrollment "$TEST_DIR"
+  persist_copy "$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/etc/pf.anchors/com.unleash"
+  printf 'block drop from any to 17.0.0.0/8\n' > "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
+  run "$UNLEASH" status --json --volume "$TEST_DIR"
+  [ "$status" -eq 0 ]
   echo "$output" | grep -q 'probes'
 }
 
@@ -224,6 +236,11 @@ assert obj["exit"] == 2
   UNLEASH_UNATTENDED=0
   UNLEASH_VOLUME="$TEST_DIR"
   run run_doctor --gate
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
   echo "$output" | grep -q E_PREFLIGHT_TOOLS
+}
+
+@test "./unleash doctor --gate process exit is 0 or 2 never 1" {
+  run "$UNLEASH" doctor --gate
+  [ "$status" -eq 0 ] || [ "$status" -eq 2 ]
 }

@@ -20,6 +20,7 @@ setup() {
 @test "live: status --json exits 0 or 3 and is an object" {
   run "$ROOT/unleash" status --json
   [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+  [ "$status" -ne 4 ]
   echo "$output" | grep -q '{'
 }
 
@@ -29,7 +30,7 @@ setup() {
 }
 
 @test "live: status/audit/report sources do not pkill" {
-  if grep -n 'pkill' "$ROOT/lib/status.sh" "$ROOT/lib/report.sh"; then
+  if grep -nE '(^|[[:space:]])pkill([[:space:]]|$)' "$ROOT/lib/status.sh" "$ROOT/lib/report.sh"; then
     echo "status/report must not pkill" >&2
     return 1
   fi

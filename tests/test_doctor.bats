@@ -27,8 +27,17 @@ setup() {
   mkdir -p "$UNLEASH_VOLUME/private/var/db/dslocal/nodes/Default"
   run run_doctor --gate
   rm -rf "$UNLEASH_VOLUME"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
   echo "$output" | grep -q E_PREFLIGHT_TOOLS
+}
+
+@test "doctor --gate does not reject disk identifier volume" {
+  load '../lib/result.sh'
+  UNLEASH_UNATTENDED=1
+  UNLEASH_VOLUME="disk3s5"
+  UNLEASH_INTENT_FLAG=1
+  run run_doctor --gate
+  ! echo "$output" | grep -q E_VOLUME_NOT_FOUND
 }
 
 @test "run_doctor --gate does not fail closed on Little Snitch" {

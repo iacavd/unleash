@@ -18,7 +18,18 @@ _doctor_core_libs() {
   printf '%s\n' colors result config detect validate dscl suppress backup pipeline status heal firewall doctor
 }
 
+_doctor_volume_is_disk_id() {
+  local spec="${1:-}"
+  spec="${spec#/dev/}"
+  case "$spec" in
+    disk[0-9]*s[0-9]*|disk[0-9]*) return 0 ;;
+  esac
+  return 1
+}
+
 # Same fixture exception as pipeline: tmp Data trees are not the live volume.
+# diskNsN and unmounted /Volumes paths still need root; missing tmp paths do not
+# (resolver emits E_VOLUME_NOT_FOUND).
 _doctor_need_root() {
   if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
     return 1
@@ -26,11 +37,14 @@ _doctor_need_root() {
   if type is_root >/dev/null 2>&1 && is_root; then
     return 1
   fi
-  if [ -n "${UNLEASH_VOLUME:-}" ] && [ -d "${UNLEASH_VOLUME}/private/var/db/dslocal/nodes/Default" ]; then
+  if [ -n "${UNLEASH_VOLUME:-}" ]; then
+    if _doctor_volume_is_disk_id "$UNLEASH_VOLUME"; then
+      return 0
+    fi
     case "${UNLEASH_VOLUME}" in
       /|/Volumes/*|/System/*) return 0 ;;
-      *) return 1 ;;
     esac
+    return 1
   fi
   return 0
 }
@@ -59,13 +73,13 @@ _doctor_little_snitch() {
   return 1
 }
 
-# Fail closed. RESULT_* set. Return 1 on fail, 0 on ok.
+# Fail closed. RESULT_* set. Return 2 on fail, 0 on ok (spec: doctor --gate is 0/2).
 run_doctor_gate() {
   local libdir du pb missing=0 lib target avail
 
   if [ -z "${BASH_VERSION:-}" ]; then
     result_fail E_PREFLIGHT_TOOLS doctor gate "bash is required"
-    return 1
+    return 2
   fi
 
   libdir=$(_doctor_libdir)
@@ -78,39 +92,32 @@ $(_doctor_core_libs)
 EOF
     if [ "$missing" -gt 0 ]; then
       result_fail E_PREFLIGHT_TOOLS doctor gate "$missing core lib(s) missing under $libdir"
-      return 1
+      return 2
     fi
   fi
 
   du="${DISKUTIL:-/usr/sbin/diskutil}"
   if [ ! -x "$du" ] && ! command -v diskutil >/dev/null 2>&1; then
     result_fail E_PREFLIGHT_TOOLS doctor gate "diskutil not available"
-    return 1
+    return 2
   fi
   pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
   if [ ! -x "$pb" ] && [ ! -x /usr/libexec/PlistBuddy ]; then
     result_fail E_PREFLIGHT_TOOLS doctor gate "PlistBuddy not available"
-    return 1
+    return 2
   fi
 
-  # Volume existence before root so a missing --volume is E_VOLUME_NOT_FOUND, not E_NOT_ROOT.
-  if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] && [ -n "${UNLEASH_VOLUME:-}" ]; then
-    if [ ! -d "${UNLEASH_VOLUME}" ]; then
-      result_fail E_VOLUME_NOT_FOUND doctor gate "volume not found: ${UNLEASH_VOLUME}"
-      return 1
-    fi
-  fi
-
+  # diskNsN and unmounted /Volumes paths are the resolver's job, not [ -d ] here.
   if _doctor_need_root; then
     result_fail E_NOT_ROOT doctor gate "mutate requires root"
-    return 1
+    return 2
   fi
 
   if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
     if _doctor_volume_locked "${UNLEASH_VOLUME:-}"; then
       if [ -z "${UNLEASH_FV_PASSWORD_FILE:-}" ] && [ -z "${UNLEASH_FV_KEY_FILE:-}" ]; then
         result_fail E_FV_LOCKED doctor gate "FileVault locked and no secret in unattended"
-        return 1
+        return 2
       fi
     fi
   fi
@@ -120,30 +127,30 @@ EOF
   avail=$(_doctor_disk_free_kb "$target")
   if [ -z "$avail" ]; then
     result_fail E_DISK_FULL doctor gate "cannot determine disk space on $target"
-    return 1
+    return 2
   fi
   case "$avail" in
     *[!0-9]*)
       result_fail E_DISK_FULL doctor gate "cannot parse disk space"
-      return 1
+      return 2
       ;;
   esac
   if [ "$avail" -lt 10240 ]; then
     result_fail E_DISK_FULL doctor gate "disk space below 10 MiB on $target"
-    return 1
+    return 2
   fi
 
   if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] || [ "${UNLEASH_RESUME:-0}" = 1 ]; then
     if [ "${UNLEASH_INTENT_FLAG:-0}" != 1 ]; then
       if ! usb_sidecar_present 2>/dev/null; then
-        if [ -n "${UNLEASH_VOLUME:-}" ] && type intent_valid >/dev/null 2>&1; then
+        if [ -n "${UNLEASH_VOLUME:-}" ] && [ -d "${UNLEASH_VOLUME}" ] && type intent_valid >/dev/null 2>&1; then
           if ! intent_valid "$(intent_path "$UNLEASH_VOLUME")" "$UNLEASH_VOLUME"; then
             result_fail E_INTENT_MISSING doctor gate "unattended mutate requires intent or USB sidecar"
-            return 1
+            return 2
           fi
         elif [ -z "${UNLEASH_VOLUME:-}" ]; then
           result_fail E_INTENT_MISSING doctor gate "unattended mutate requires intent or USB sidecar"
-          return 1
+          return 2
         fi
       fi
     fi

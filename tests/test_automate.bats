@@ -113,6 +113,9 @@ _write_intent() {
   grep -q 'name=persist' "$journal"
   grep -q 'S_ALREADY_OK' "$journal"
   ! echo "$output" | grep -q COMPLETE
+  lg="$TEST_DIR/Library/Unleash/state/last-good"
+  [ -f "$lg" ]
+  grep -q 'probe=hosts status=ok' "$lg"
 }
 
 @test "persist probe skip S_ALREADY_OK when copy already live-path" {

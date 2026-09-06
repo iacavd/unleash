@@ -401,7 +401,8 @@ cmd_status() {
 		DATA_ROOT=""
 		data_mount=""
 	fi
-	run_status
+	# || so a dirty exit 3 is not an ERR-trap "unhandled error".
+	run_status || exit $?
 }
 
 cmd_check() {

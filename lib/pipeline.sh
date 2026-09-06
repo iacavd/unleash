@@ -761,22 +761,6 @@ _pipeline_rollback_layer() {
 	esac
 }
 
-_pipeline_last_good_from_probes() {
-	local name st reason
-	local lg=()
-	while IFS=$'\t' read -r name st reason || [ -n "$name" ]; do
-		[ -n "$name" ] || continue
-		if [ -n "$reason" ]; then
-			lg[${#lg[@]}]="probe=${name} status=${st} reason=${reason}"
-		else
-			lg[${#lg[@]}]="probe=${name} status=${st}"
-		fi
-	done <<EOF
-${PROBE_LINES}
-EOF
-	journal_last_good_write "$PIPELINE_VOLUME" "${lg[@]}"
-}
-
 _pipeline_probes() {
 	journal_step probes start
 	if _pipeline_is_dry_run; then
@@ -788,7 +772,6 @@ _pipeline_probes() {
 	case "$RESULT_STATUS" in
 		ok|skip)
 			journal_step probes ok
-			_pipeline_last_good_from_probes || true
 			result_ok pipeline probes "required probes passed"
 			return 0
 			;;

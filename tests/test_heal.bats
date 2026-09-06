@@ -175,6 +175,132 @@ teardown() {
   [ "$RESULT_REASON" = "S_NO_DSCACHEUTIL" ]
 }
 
+@test "probe_pf Recovery/fixture is S_PF_RECOVERY when anchor exists" {
+  DATA_ROOT="$TEST_DIR"
+  probe_pf
+  [ "$RESULT_STATUS" = "fail" ]
+  mkdir -p "$TEST_DIR/private/etc/pf.anchors/com.unleash"
+  printf 'block drop from any to 17.0.0.0/8\n' > "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
+  probe_pf
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_PF_RECOVERY" ]
+}
+
+@test "probe_processes off live OS is S_ALREADY_OK not S_NO_PROFILES_CMD" {
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_ALREADY_OK" ]
+}
+
+@test "probe_processes missing TSV on live OS fails" {
+  _probe_is_live_os() { return 0; }
+  _mdm_agents_tsv() { return 1; }
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "fail" ]
+  [ "$RESULT_REASON" = "E_VERIFY_FAIL" ]
+}
+
+@test "probe_processes TSV running agent fails" {
+  _probe_is_live_os() { return 0; }
+  printf 'dummy\tdummyagent\t/usr/local/bin/no-such-dummy\t/Library/LaunchDaemons/com.nosuchdummy*\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  ps() {
+    echo "root 42 0.0 0.0 dummyagent"
+  }
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "fail" ]
+}
+
+@test "probe_processes TSV binary on Data volume fails" {
+  _probe_is_live_os() { return 0; }
+  printf 'dummy\tdummyagent\t/usr/local/bin/dummyagent\t/Library/LaunchDaemons/com.dummy*\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  mkdir -p "$TEST_DIR/usr/local/bin"
+  printf '#!/bin/sh\n' > "$TEST_DIR/usr/local/bin/dummyagent"
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "fail" ]
+}
+
+@test "probe_processes TSV launchd glob fails" {
+  _probe_is_live_os() { return 0; }
+  printf 'dummy\tdummyagent\t/usr/local/bin/no-such-dummy\t/Library/LaunchDaemons/com.dummy*\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  printf 'plist' > "$TEST_DIR/Library/LaunchDaemons/com.dummy.agent.plist"
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "fail" ]
+}
+
+@test "probe_processes missing profiles on live is S_NO_PROFILES_CMD" {
+  _probe_is_live_os() { return 0; }
+  printf '# id\tproc_pattern\tbinaries\tlaunch_glob\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  PROFILES="/no/such/profiles"
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_NO_PROFILES_CMD" ]
+}
+
+@test "probe_processes enrollment Yes plus mdmclient fails" {
+  _probe_is_live_os() { return 0; }
+  printf '# id\tproc_pattern\tbinaries\tlaunch_glob\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  stub=$(mktemp)
+  printf '%s\n' '#!/bin/bash' 'echo "Enrolled via DEP: Yes"' 'echo "MDM enrollment: Yes"' > "$stub"
+  chmod +x "$stub"
+  PROFILES="$stub"
+  ps() {
+    echo "root 1 0.0 0.0 /usr/libexec/mdmclient"
+  }
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  rm -f "$stub"
+  [ "$RESULT_STATUS" = "fail" ]
+}
+
+@test "probe_processes idle mdmclient with enrollment No is ok" {
+  _probe_is_live_os() { return 0; }
+  printf '# id\tproc_pattern\tbinaries\tlaunch_glob\n' > "$TEST_DIR/agents.tsv"
+  _mdm_agents_tsv() { printf '%s\n' "$TEST_DIR/agents.tsv"; }
+  stub=$(mktemp)
+  printf '%s\n' '#!/bin/bash' 'echo "Enrolled via DEP: No"' 'echo "MDM enrollment: No"' > "$stub"
+  chmod +x "$stub"
+  PROFILES="$stub"
+  ps() {
+    echo "root 1 0.0 0.0 /usr/libexec/mdmclient"
+  }
+  DATA_ROOT="$TEST_DIR"
+  probe_processes
+  rm -f "$stub"
+  [ "$RESULT_STATUS" = "ok" ]
+}
+
+@test "run_probes clean pass writes last-good kv and dirty does not overwrite" {
+  DATA_ROOT="$TEST_DIR"
+  suppress_enrollment "$TEST_DIR"
+  persist_copy "$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/etc/pf.anchors/com.unleash"
+  printf 'block drop from any to 17.0.0.0/8\n' > "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
+  run_probes
+  [ "$RESULT_STATUS" = "ok" ]
+  lg="$TEST_DIR/Library/Unleash/state/last-good"
+  [ -f "$lg" ]
+  grep -q 'probe=hosts status=ok' "$lg"
+  grep -q 'probe=dns status=skip reason=S_NO_DSCACHEUTIL' "$lg"
+  grep -q 'probe=pf status=skip reason=S_PF_RECOVERY' "$lg"
+  cp "$lg" "$TEST_DIR/last-good.clean"
+  rm -f "$TEST_DIR/private/etc/hosts"
+  run_probes
+  [ "$RESULT_STATUS" = "fail" ]
+  [ -f "$lg" ]
+  cmp -s "$lg" "$TEST_DIR/last-good.clean"
+}
+
 @test "persist not-writable dest is status 1 E_PERSIST_PATH" {
   USB=$(mktemp -d)
   mkdir -p "$USB/lib"
