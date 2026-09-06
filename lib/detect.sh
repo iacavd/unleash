@@ -138,11 +138,15 @@ _detect_is_locked() {
 }
 
 # Personal recovery key is a passphrase; -recoverykeyfile is not a diskutil flag.
-# Never put the secret on argv. Unlock chatter goes to stderr, not resolver stdout.
+# Never put the secret on argv (-passphrase). Unlock chatter goes to stderr, not resolver stdout.
+# FAT32/exFAT USB: chmod 600 is a no-op or fails. Do not treat that as a secret-store;
+# physical control of the stick is the store. Still attempt chmod 600 on APFS/HFS.
 _detect_unlock_stdin() {
-	local dev="$1" file="$2"
+	local dev="$1" file="$2" line
 	chmod 600 "$file" 2>/dev/null || true
-	_detect_du apfs unlockVolume "$dev" -stdinpassphrase < "$file" >/dev/null
+	IFS= read -r line < "$file" || true
+	line="${line%$'\r'}"
+	printf '%s\n' "$line" | _detect_du apfs unlockVolume "$dev" -stdinpassphrase >/dev/null
 }
 
 _detect_unlock() {
