@@ -83,3 +83,18 @@ teardown() {
   load_config
   [ "$UNLEASH_USB_INTENT" = 1 ]
 }
+
+@test "home I_OWN_THIS_DEVICE does not count as USB sidecar" {
+  echo "I_OWN_THIS_DEVICE=1" > "$CONFIG_FILE"
+  SCRIPT_DIR="$TEST_DIR"
+  load_config
+  run usb_sidecar_present
+  [ "$status" -ne 0 ]
+}
+
+@test "USB unleash.conf I_OWN_THIS_DEVICE is a sidecar" {
+  SCRIPT_DIR="$TEST_DIR"
+  echo "I_OWN_THIS_DEVICE=1" > "$TEST_DIR/unleash.conf"
+  run usb_sidecar_present
+  [ "$status" -eq 0 ]
+}

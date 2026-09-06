@@ -295,11 +295,6 @@ cmd_dualboot() {
 	pipeline_run
 }
 
-cmd_heal() {
-	# Persist stays eligible; the persist step runs iff the probe is dirty.
-	pipeline_run_heal
-}
-
 cmd_persist() {
 	local data_mount
 	if is_recovery; then
@@ -490,7 +485,9 @@ cmd_interactive_recovery() {
 		echo ""
 		warn "Found DEP activation record on $data_mount"
 		if [ -t 0 ] && confirm "Auto-wipe DEP record and apply MDM suppression now?"; then
-			auto_recovery_mode "$data_mount"
+			UNLEASH_CREATE_ADMIN=0
+			UNLEASH_VOLUME="$data_mount"
+			cmd_apply
 			return 0
 		fi
 	fi
@@ -517,20 +514,28 @@ cmd_interactive_recovery() {
 	select opt in "${options[@]}"; do
 		case $opt in
 			"Auto-wipe DEP & Suppress (Recommended - preserves existing users)")
-				auto_recovery_mode "$data_mount"
+				UNLEASH_CREATE_ADMIN=0
+				UNLEASH_VOLUME="$data_mount"
+				cmd_apply
 				;;
 			"Wipe DEP records only")
-				wipe_dep_records "$data_mount"
+				UNLEASH_CREATE_ADMIN=0
+				UNLEASH_VOLUME="$data_mount"
+				cmd_apply
 				;;
 			"Full bypass (create admin + suppress MDM)")
-				full_bypass_mode "$data_mount"
-				info "Reboot to apply."
+				UNLEASH_CREATE_ADMIN=1
+				UNLEASH_VOLUME="$data_mount"
+				cmd_apply
 				;;
 			"Suppress enrollment only")
-				suppress_only_mode "$data_mount"
+				UNLEASH_CREATE_ADMIN=0
+				UNLEASH_VOLUME="$data_mount"
+				cmd_apply
 				;;
 			"Auto-heal")
-				heal_suppress "$data_mount"
+				UNLEASH_VOLUME="$data_mount"
+				cmd_heal
 				;;
 			"Install pf firewall")
 				install_pf_mdm_block "$data_mount"
@@ -592,7 +597,7 @@ cmd_interactive_normal() {
 			if ! is_root; then
 				error_exit "Heal needs sudo. Run: sudo ./unleash"
 			fi
-			heal_suppress ""
+			cmd_heal
 			;;
 		"Backup state")
 			local data_mount
@@ -840,7 +845,7 @@ main() {
 		backup)           cmd_backup ;;
 		restore)          cmd_restore ;;
 		backup-list)      cmd_backup_list ;;
-		dualboot)         cmd_apply ;;
+		dualboot)         cmd_dualboot ;;
 		status|st|ls)     cmd_status ;;
 		check)            cmd_check ;;
 		history)          cmd_history ;;

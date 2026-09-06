@@ -72,6 +72,7 @@ _write_intent() {
   [ "$status" -eq 2 ]
   echo "$output" | grep -q E_INTENT_MISSING
   [ ! -f "$TEST_DIR/private/etc/hosts" ]
+  [ ! -d "$TEST_DIR/Library/Unleash/logs" ]
 }
 
 @test "password file 1234 is E_DEFAULT_PASSWORD via cmd_apply" {
@@ -123,29 +124,37 @@ _write_intent() {
   grep -q 'S_ALREADY_OK' "$TEST_DIR/Library/Unleash/state/journal"
 }
 
-@test "cmd_heal does not set UNLEASH_PERSIST=0" {
-  if grep -E 'UNLEASH_PERSIST=0' "$ROOT/unleash" | grep -v '#' | grep -q cmd_heal; then
-    echo "cmd_heal must not disable persist" >&2
-    return 1
-  fi
-  if awk '/^cmd_heal\(\)/,/^}/ { if ($0 ~ /UNLEASH_PERSIST=0/ && $0 !~ /#/) found=1 } END { exit found ? 0 : 1 }' "$ROOT/unleash"; then
-    echo "cmd_heal must not disable persist" >&2
-    return 1
-  fi
+@test "cmd_heal re-copies persist when binary missing" {
   if awk '/^pipeline_run_heal\(\)/,/^}/ { if ($0 ~ /UNLEASH_PERSIST=0/) found=1 } END { exit found ? 0 : 1 }' "$ROOT/lib/pipeline.sh"; then
     echo "pipeline_run_heal must not disable persist" >&2
+    return 1
+  fi
+  if awk '/^cmd_heal\(\)/,/^}/ { if ($0 ~ /UNLEASH_PERSIST=0/) found=1 } END { exit found ? 0 : 1 }' "$ROOT/lib/pipeline.sh"; then
+    echo "cmd_heal must not disable persist" >&2
     return 1
   fi
   _write_intent
   UNLEASH_UNATTENDED=1
   persist_copy "$TEST_DIR"
+  [ -f "$TEST_DIR/Library/Unleash/unleash" ]
+  rm -f "$TEST_DIR/Library/Unleash/unleash"
   run cmd_heal
   [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
-  if [ -f "$TEST_DIR/Library/Unleash/state/journal" ]; then
-    if grep 'name=persist' "$TEST_DIR/Library/Unleash/state/journal" | grep -q 'UNLEASH_PERSIST=0'; then
-      false
-    fi
-  fi
+  [ -f "$TEST_DIR/Library/Unleash/unleash" ]
+  grep 'name=persist' "$TEST_DIR/Library/Unleash/state/journal" | grep -q 'status=ok'
+}
+
+@test "dry-run unattended sidecar does not write intent" {
+  USB=$(mktemp -d)
+  touch "$USB/I_OWN_THIS_DEVICE"
+  SCRIPT_DIR="$USB"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_DRY_RUN=1
+  DRY_RUN=true
+  run cmd_apply
+  rm -rf "$USB"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_DIR/Library/Unleash/state/intent" ]
 }
 
 @test "USB sidecar I_OWN_THIS_DEVICE is consumed onto target intent" {

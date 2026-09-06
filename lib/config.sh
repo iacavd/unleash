@@ -57,12 +57,22 @@ intent_path() {
   printf '%s\n' "${root}/Library/Unleash/state/intent"
 }
 
-# Empty file next to unleash, or unleash.conf I_OWN_THIS_DEVICE=1.
+# USB sidecar only: empty file next to unleash, or USB unleash.conf I_OWN_THIS_DEVICE=1.
+# Home ~/.unleash.conf must not satisfy unattended intent.
 usb_sidecar_present() {
   local root="${SCRIPT_DIR:-}"
+  local line key value
   [ -n "$root" ] || return 1
   [ -f "$root/I_OWN_THIS_DEVICE" ] && return 0
-  [ "${UNLEASH_USB_INTENT:-0}" = 1 ] && return 0
+  [ -f "$root/unleash.conf" ] || return 1
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    key="${key// /}"
+    value="${value// /}"
+    [ "$key" = "I_OWN_THIS_DEVICE" ] || continue
+    case "$value" in
+      1|true|yes|YES) return 0 ;;
+    esac
+  done < "$root/unleash.conf"
   return 1
 }
 
@@ -84,7 +94,8 @@ write_intent() {
   mv "$tmp" "$dest"
 }
 
-# owned=1 and volume_uuid match when both sides have a UUID (cloned tree → miss).
+# owned=1. If diskutil reports a UUID, stored volume_uuid must match (cloned tree → miss).
+# Empty/empty only for fixtures diskutil cannot map.
 intent_valid() {
   local path="$1"
   local data_root="${2:-${DATA_ROOT-}}"
@@ -100,7 +111,7 @@ intent_valid() {
   done < "$path"
   [ "$owned" = 1 ] || return 1
   current=$(volume_uuid_of "$data_root")
-  if [ -n "$uuid" ] && [ -n "$current" ] && [ "$uuid" != "$current" ]; then
+  if [ -n "$current" ] && [ "$uuid" != "$current" ]; then
     return 1
   fi
   return 0
@@ -138,6 +149,10 @@ check_or_consume_intent() {
   fi
 
   if usb_sidecar_present; then
+    if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
+      info pipeline intent "dry-run: would consume USB sidecar onto state/intent"
+      return 0
+    fi
     write_intent "$data_root" || {
       result_fail E_INTENT_MISSING pipeline intent "cannot write state/intent from USB sidecar"
       return 1

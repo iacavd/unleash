@@ -148,8 +148,11 @@ detect_migration_assistant() {
 clean_ma_artifacts() {
   local data_mount="${1:-}"
   local homes=()
-  if [ -n "$data_mount" ] && [ -d "$data_mount/Users" ]; then
-    for h in "$data_mount/Users/"*/; do homes+=("$h"); done
+  if [ -n "$data_mount" ]; then
+    # Never fall back to live /Users when a target volume was passed.
+    if [ -d "$data_mount/Users" ]; then
+      for h in "$data_mount/Users/"*/; do homes+=("$h"); done
+    fi
   elif [ -d "/Users" ]; then
     for h in /Users/*/; do homes+=("$h"); done
   fi

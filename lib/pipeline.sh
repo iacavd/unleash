@@ -209,6 +209,45 @@ journal_resume_scan() {
 	printf '%s' "$last"
 }
 
+# Last SNAP id= for run=$1. Empty if the unfinished run never snapshotted.
+_journal_snap_id_for_run() {
+	local want="${1:-}"
+	local journal line op run id last=""
+	journal="$(_journal_path)"
+	[ -f "$journal" ] || return 0
+	[ -n "$want" ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		op=$(_kv_get "$line" op)
+		run=$(_kv_get "$line" run)
+		[ "$op" = "SNAP" ] || continue
+		[ "$run" = "$want" ] || continue
+		id=$(_kv_get "$line" id)
+		[ -n "$id" ] && last="$id"
+	done < "$journal"
+	printf '%s' "$last"
+}
+
+# Last STEP status= for name=$1 in JOURNAL_RUN. Empty if never started.
+_pipeline_journal_step_status() {
+	local want="${1:-}"
+	local journal line op name status run last=""
+	journal="$(_journal_path)"
+	[ -f "$journal" ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		run=$(_kv_get "$line" run)
+		[ "$run" = "${JOURNAL_RUN:-}" ] || continue
+		op=$(_kv_get "$line" op)
+		[ "$op" = "STEP" ] || continue
+		name=$(_kv_get "$line" name)
+		[ "$name" = "$want" ] || continue
+		status=$(_kv_get "$line" status)
+		last="$status"
+	done < "$journal"
+	printf '%s' "$last"
+}
+
 # Atomic replace on the same volume (write temp + mv).
 journal_last_good_write() {
 	local volume="${1:-}"
@@ -370,12 +409,17 @@ _pipeline_preflight() {
 		return 1
 	fi
 
-	if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] && [ "${UNLEASH_CREATE_ADMIN:-0}" = 1 ]; then
-		if ! require_create_admin_creds; then
-			return 1
+	if [ "${UNLEASH_CREATE_ADMIN:-0}" = 1 ]; then
+		if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
+			if ! require_create_admin_creds; then
+				return 1
+			fi
 		fi
-		if ! password_from_file "$UNLEASH_PASSWORD_FILE" >/dev/null; then
-			return 1
+		if [ -n "${UNLEASH_PASSWORD_FILE:-}" ]; then
+			# Redirect is not a subshell; RESULT_* stays in this shell.
+			if ! password_from_file "$UNLEASH_PASSWORD_FILE" >/dev/null; then
+				return 1
+			fi
 		fi
 	fi
 
@@ -491,8 +535,29 @@ _pipeline_run_step() {
 	esac
 }
 
+# Read password file in this shell (no $() so RESULT_* is not dropped).
+_pipeline_password_from_file() {
+	local path="$1"
+	local tmp rc
+	PIPELINE_PASSWORD=""
+	tmp=$(mktemp) || {
+		result_fail E_CREDS_REQUIRED validate password-file "cannot create temp"
+		return 1
+	}
+	rc=0
+	password_from_file "$path" >"$tmp" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		rm -f "$tmp"
+		return 1
+	fi
+	IFS= read -r PIPELINE_PASSWORD < "$tmp" || true
+	PIPELINE_PASSWORD="${PIPELINE_PASSWORD%$'\r'}"
+	rm -f "$tmp"
+	return 0
+}
+
 _pipeline_step_dscl() {
-	local node username password realname uid
+	local node username password realname uid uid_out rc
 	if _pipeline_is_dry_run; then
 		info "[DRY RUN] Would create admin user"
 		result_ok dscl create "dry-run"
@@ -502,10 +567,11 @@ _pipeline_step_dscl() {
 	if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
 		username="${UNLEASH_USERNAME}"
 		realname="${UNLEASH_REALNAME:-$username}"
-		password=$(password_from_file "$UNLEASH_PASSWORD_FILE") || {
-			# password_from_file already set RESULT_*
+		if ! _pipeline_password_from_file "$UNLEASH_PASSWORD_FILE"; then
 			return 0
-		}
+		fi
+		password="$PIPELINE_PASSWORD"
+		PIPELINE_PASSWORD=""
 	else
 		username="${UNLEASH_USERNAME:-}"
 		if [ -z "$username" ]; then
@@ -513,7 +579,11 @@ _pipeline_step_dscl() {
 		fi
 		realname="${UNLEASH_REALNAME:-$username}"
 		if [ -n "${UNLEASH_PASSWORD_FILE:-}" ]; then
-			password=$(password_from_file "$UNLEASH_PASSWORD_FILE") || return 0
+			if ! _pipeline_password_from_file "$UNLEASH_PASSWORD_FILE"; then
+				return 0
+			fi
+			password="$PIPELINE_PASSWORD"
+			PIPELINE_PASSWORD=""
 		else
 			prompt_password password
 		fi
@@ -522,18 +592,25 @@ _pipeline_step_dscl() {
 		result_skip S_ALREADY_OK dscl create "user $username already exists"
 		return 0
 	fi
-	uid=$(find_available_uid "$node") || {
-		[ -n "${RESULT_REASON:-}" ] || result_fail E_DSCL_FAIL dscl uid "no UniqueID"
+	uid_out=$(mktemp) || {
+		result_fail E_DSCL_FAIL dscl uid "cannot create temp"
 		return 0
 	}
+	rc=0
+	find_available_uid "$node" >"$uid_out" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		rm -f "$uid_out"
+		[ -n "${RESULT_REASON:-}" ] || result_fail E_DSCL_FAIL dscl uid "no UniqueID"
+		return 0
+	fi
+	IFS= read -r uid < "$uid_out" || true
+	rm -f "$uid_out"
 	create_admin_user "$node" "$DATA_ROOT" "$username" "$realname" "$password" "$uid" || true
 	password=""
 	if [ "$RESULT_STATUS" = "ok" ]; then
 		touch "$DATA_ROOT/private/var/db/.AppleSetupDone" 2>/dev/null || true
 		add_to_filevault "$username" || true
-		if [ "$RESULT_STATUS" = "skip" ] && [ "$RESULT_REASON" = "S_FV_ADD" ]; then
-			result_ok dscl create "admin $username created"
-		fi
+		# Leave S_FV_ADD skip on the dscl step (must not degrade).
 	fi
 	return 0
 }
@@ -562,6 +639,10 @@ _pipeline_step_ma_clean() {
 	if _pipeline_is_dry_run; then
 		info "[DRY RUN] Would clean user_mdm_artifacts"
 		result_ok pipeline ma_clean "dry-run"
+		return 0
+	fi
+	if [ ! -d "${DATA_ROOT}/Users" ]; then
+		result_skip S_ALREADY_OK pipeline ma_clean "no Users on target volume"
 		return 0
 	fi
 	clean_ma_artifacts "$DATA_ROOT"
@@ -643,6 +724,11 @@ _pipeline_probe_plist() {
 	"$pb" -c "Print :com.apple.ManagedClient.enroll" "$ldp" 2>/dev/null | grep -q true
 }
 
+_pipeline_probe_pf() {
+	local f="${DATA_ROOT}/private/etc/pf.anchors/com.unleash/mdm"
+	[ -s "$f" ]
+}
+
 _pipeline_file_probes_ok() {
 	_pipeline_probe_hosts || return 1
 	_pipeline_probe_plist || return 1
@@ -650,6 +736,28 @@ _pipeline_file_probes_ok() {
 		return 1
 	fi
 	return 0
+}
+
+_pipeline_layer_probe() {
+	case "$1" in
+		hosts) _pipeline_probe_hosts ;;
+		dep_wipe) _pipeline_probe_dep ;;
+		daemons) _pipeline_probe_plist ;;
+		persist) persist_probe_ok ;;
+		pf) _pipeline_probe_pf ;;
+		snapshot|dscl|ma_clean|harden|probes) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+_pipeline_rollback_layer() {
+	[ -n "${SNAPSHOT_ID:-}" ] || return 0
+	case "$1" in
+		hosts) rollback_hosts "$SNAPSHOT_ID" "$DATA_ROOT" || true ;;
+		dep_wipe) rollback_dep "$SNAPSHOT_ID" "$DATA_ROOT" || true ;;
+		daemons) rollback_plist "$SNAPSHOT_ID" "$DATA_ROOT" || true ;;
+		pf) rollback_pf "$SNAPSHOT_ID" "$DATA_ROOT" || true ;;
+	esac
 }
 
 _pipeline_probes() {
@@ -686,7 +794,7 @@ _pipeline_probes() {
 
 _pipeline_finish() {
 	if ! _pipeline_probes; then
-		journal_degraded "${RESULT_REASON:-E_VERIFY_FAIL}" "$PIPELINE_NEXT" || true
+		# Exit 4: probes disagree after mutate. Do not write state/degraded (exit 3 only).
 		journal_commit || true
 		_pipeline_exit 4
 	fi
@@ -705,9 +813,105 @@ _pipeline_finish() {
 	_pipeline_exit 0
 }
 
+_pipeline_begin_and_snapshot() {
+	if ! journal_begin "${UNLEASH_CMD:-apply}" "$PIPELINE_VOLUME"; then
+		result_fail E_DISK_FULL pipeline journal "cannot write journal"
+		_pipeline_exit 2
+	fi
+	PIPELINE_HAD_BEGIN=1
+	journal_step snapshot start
+	if backup_state "$DATA_ROOT"; then
+		journal_snap "$SNAPSHOT_ID"
+		journal_step snapshot ok
+	else
+		journal_step snapshot fail "${RESULT_REASON:-E_DISK_FULL}"
+		journal_abort || true
+		_pipeline_exit 2
+	fi
+}
+
+_pipeline_enable_logs() {
+	if [ -n "${UNLEASH_LOG_FILE:-}" ] || [ -n "${LOG_FILE:-}" ]; then
+		return 0
+	fi
+	mkdir -p "$DATA_ROOT/Library/Unleash/logs" 2>/dev/null || return 0
+	if [ -d "$DATA_ROOT/Library/Unleash/logs" ]; then
+		LOG_FILE="$DATA_ROOT/Library/Unleash/logs/unleash.log"
+	fi
+}
+
+# $1 = _pipeline_run_step | _pipeline_replay_step | _pipeline_run_if_dirty
+_pipeline_each_mutate_step() {
+	local runner="$1"
+	if [ "${UNLEASH_CREATE_ADMIN:-0}" = 1 ]; then
+		"$runner" dscl _pipeline_step_dscl
+	fi
+	"$runner" hosts _pipeline_step_hosts
+	"$runner" dep_wipe _pipeline_step_dep_wipe
+	"$runner" daemons _pipeline_step_daemons
+	if type clean_ma_artifacts >/dev/null 2>&1; then
+		"$runner" ma_clean _pipeline_step_ma_clean
+	fi
+	"$runner" pf _pipeline_step_pf
+	"$runner" persist _pipeline_step_persist
+	if [ "${UNLEASH_HARDEN:-0}" = 1 ]; then
+		"$runner" harden _pipeline_step_harden
+	fi
+}
+
+# Unfinished run: skip ok+probe, retry start from original SNAP, run remaining.
+_pipeline_replay_step() {
+	local name="$1"
+	shift
+	local st
+	st=$(_pipeline_journal_step_status "$name")
+	case "$st" in
+		ok)
+			if _pipeline_layer_probe "$name"; then
+				journal_step "$name" skip S_ALREADY_OK
+				return 0
+			fi
+			_pipeline_run_step "$name" "$@"
+			;;
+		start)
+			_pipeline_rollback_layer "$name"
+			_pipeline_run_step "$name" "$@"
+			;;
+		*)
+			_pipeline_run_step "$name" "$@"
+			;;
+	esac
+}
+
+_pipeline_run_if_dirty() {
+	local name="$1"
+	shift
+	if _pipeline_layer_probe "$name"; then
+		journal_step "$name" skip S_ALREADY_OK
+		return 0
+	fi
+	_pipeline_run_step "$name" "$@"
+}
+
+_pipeline_replay_unfinished() {
+	SNAPSHOT_ID=$(_journal_snap_id_for_run "$JOURNAL_RUN")
+	if [ -z "$SNAPSHOT_ID" ]; then
+		journal_step snapshot start
+		if backup_state "$DATA_ROOT"; then
+			journal_snap "$SNAPSHOT_ID"
+			journal_step snapshot ok
+		else
+			journal_step snapshot fail "${RESULT_REASON:-E_DISK_FULL}"
+			journal_abort || true
+			_pipeline_exit 2
+		fi
+	fi
+	_pipeline_each_mutate_step _pipeline_replay_step
+}
+
 # Reads UNLEASH_* globals. No second flag parser.
 pipeline_run() {
-	local vol_out rc
+	local vol_out rc unfinished
 
 	PIPELINE_DEGRADED=0
 	PIPELINE_SKIP_REASONS=""
@@ -730,13 +934,6 @@ pipeline_run() {
 		_pipeline_exit 2
 	fi
 	DATA_ROOT="$PIPELINE_VOLUME"
-
-	if [ -z "${UNLEASH_LOG_FILE:-}" ] && [ -z "${LOG_FILE:-}" ]; then
-		mkdir -p "$DATA_ROOT/Library/Unleash/logs" 2>/dev/null || true
-		if [ -d "$DATA_ROOT/Library/Unleash/logs" ]; then
-			LOG_FILE="$DATA_ROOT/Library/Unleash/logs/unleash.log"
-		fi
-	fi
 
 	if ! check_or_consume_intent "$DATA_ROOT"; then
 		_pipeline_exit 2
@@ -761,46 +958,28 @@ pipeline_run() {
 	if ! pipeline_lock_acquire; then
 		_pipeline_exit 2
 	fi
+	_pipeline_enable_logs
 
 	if [ "${UNLEASH_RESUME:-0}" = 1 ]; then
+		unfinished=$(journal_resume_scan)
+		if [ -n "$unfinished" ]; then
+			JOURNAL_RUN="$unfinished"
+			PIPELINE_HAD_BEGIN=1
+			_pipeline_replay_unfinished
+			_pipeline_finish
+		fi
 		if persist_probe_ok && _pipeline_file_probes_ok; then
 			result_skip S_ALREADY_OK pipeline resume "suppression already intact"
 			pipeline_lock_release
 			_pipeline_exit 0
 		fi
+		_pipeline_begin_and_snapshot
+		_pipeline_each_mutate_step _pipeline_run_if_dirty
+		_pipeline_finish
 	fi
 
-	if ! journal_begin "${UNLEASH_CMD:-apply}" "$PIPELINE_VOLUME"; then
-		result_fail E_DISK_FULL pipeline journal "cannot write journal"
-		_pipeline_exit 2
-	fi
-	PIPELINE_HAD_BEGIN=1
-
-	journal_step snapshot start
-	if backup_state "$DATA_ROOT"; then
-		journal_snap "$SNAPSHOT_ID"
-		journal_step snapshot ok
-	else
-		journal_step snapshot fail "${RESULT_REASON:-E_DISK_FULL}"
-		journal_abort || true
-		_pipeline_exit 2
-	fi
-
-	if [ "${UNLEASH_CREATE_ADMIN:-0}" = 1 ]; then
-		_pipeline_run_step dscl _pipeline_step_dscl
-	fi
-	_pipeline_run_step hosts _pipeline_step_hosts
-	_pipeline_run_step dep_wipe _pipeline_step_dep_wipe
-	_pipeline_run_step daemons _pipeline_step_daemons
-	if type clean_ma_artifacts >/dev/null 2>&1; then
-		_pipeline_run_step ma_clean _pipeline_step_ma_clean
-	fi
-	_pipeline_run_step pf _pipeline_step_pf
-	_pipeline_run_step persist _pipeline_step_persist
-	if [ "${UNLEASH_HARDEN:-0}" = 1 ]; then
-		_pipeline_run_step harden _pipeline_step_harden
-	fi
-
+	_pipeline_begin_and_snapshot
+	_pipeline_each_mutate_step _pipeline_run_step
 	_pipeline_finish
 }
 

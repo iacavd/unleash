@@ -134,6 +134,14 @@ teardown() {
   [ ! -f "$(_lock_path)" ]
 }
 
+@test "password_from_file is not captured in a subshell in pipeline dscl" {
+  ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  if grep -E 'password=\$\(password_from_file' "$ROOT/lib/pipeline.sh"; then
+    echo "password_from_file must not run in \$()" >&2
+    return 1
+  fi
+}
+
 @test "pipeline_rollback_files restores hosts" {
   mkdir -p "$DATA_ROOT/private/etc"
   echo "original hosts" > "$DATA_ROOT/private/etc/hosts"
@@ -173,6 +181,75 @@ teardown() {
   grep -q 'op=BEGIN' "$journal"
   grep -q 'name=dep_wipe' "$journal"
   grep -q 'status=skip' "$journal"
+}
+
+@test "heal resume does not journal_begin over an unfinished run" {
+  load '../lib/config.sh'
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  load '../lib/firewall.sh'
+  load '../lib/ma_detect.sh'
+  mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  mkdir -p "$DATA_ROOT/private/etc"
+  mkdir -p "$DATA_ROOT/private/var/db/ConfigurationProfiles/Settings"
+  mkdir -p "$DATA_ROOT/private/var/db/com.apple.xpc.launchd"
+  mkdir -p "$DATA_ROOT/Library/Unleash/state"
+  printf 'owned=1\nts=2026-09-06T00:00:00Z\nvolume_uuid=\n' > "$DATA_ROOT/Library/Unleash/state/intent"
+  UNLEASH_VOLUME="$DATA_ROOT"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  UNLEASH_RESUME=1
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  journal_begin apply "$DATA_ROOT"
+  first_run="$JOURNAL_RUN"
+  backup_state "$DATA_ROOT"
+  journal_snap "$SNAPSHOT_ID"
+  journal_step hosts start
+  suppress_hosts "$DATA_ROOT"
+  journal_step hosts ok
+  journal_step daemons start
+  run pipeline_run
+  [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+  begins=$(grep -c 'op=BEGIN' "$DATA_ROOT/Library/Unleash/state/journal")
+  [ "$begins" -eq 1 ]
+  grep -q "run=$first_run" "$DATA_ROOT/Library/Unleash/state/journal"
+  grep 'name=daemons' "$DATA_ROOT/Library/Unleash/state/journal" | grep -q 'status=ok'
+}
+
+@test "PlistBuddy fail journals daemons fail, restores plist, exit 1" {
+  load '../lib/config.sh'
+  load '../lib/validate.sh'
+  load '../lib/suppress.sh'
+  load '../lib/heal.sh'
+  load '../lib/firewall.sh'
+  load '../lib/ma_detect.sh'
+  mkdir -p "$DATA_ROOT/private/var/db/dslocal/nodes/Default"
+  mkdir -p "$DATA_ROOT/private/etc"
+  mkdir -p "$DATA_ROOT/private/var/db/ConfigurationProfiles/Settings"
+  mkdir -p "$DATA_ROOT/private/var/db/com.apple.xpc.launchd"
+  mkdir -p "$DATA_ROOT/Library/Unleash/state"
+  printf 'owned=1\nts=2026-09-06T00:00:00Z\nvolume_uuid=\n' > "$DATA_ROOT/Library/Unleash/state/intent"
+  orig='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>KeepMe</key><true/></dict></plist>'
+  printf '%s\n' "$orig" > "$DATA_ROOT/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  UNLEASH_VOLUME="$DATA_ROOT"
+  UNLEASH_UNATTENDED=1
+  UNLEASH_CREATE_ADMIN=0
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  failpb=$(mktemp)
+  printf '%s\n' '#!/bin/bash' 'exit 1' > "$failpb"
+  chmod +x "$failpb"
+  PLISTBUDDY="$failpb"
+  export PLISTBUDDY
+  run cmd_apply
+  rm -f "$failpb"
+  [ "$status" -eq 1 ]
+  journal="$DATA_ROOT/Library/Unleash/state/journal"
+  grep -q 'name=daemons' "$journal"
+  grep -q 'status=fail' "$journal"
+  grep -q 'KeepMe' "$DATA_ROOT/private/var/db/com.apple.xpc.launchd/disabled.plist"
 }
 
 @test "pipeline_run E_VOLUME_RO exits 2 with no BEGIN" {

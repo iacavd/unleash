@@ -196,6 +196,20 @@ EOF
   [ "$RESULT_REASON" = "E_DSCL_FAIL" ]
 }
 
+@test "create_admin_user journals user_created after -create even if later attrs fail" {
+  load '../lib/detect.sh'
+  load '../lib/backup.sh'
+  load '../lib/pipeline.sh'
+  DATA_ROOT="$TEST_DIR"
+  journal_begin apply "$TEST_DIR"
+  _install_dscl_mock create_nuid
+  node=$(dscl_node "$TEST_DIR")
+  rc=0
+  create_admin_user "$node" "$TEST_DIR" "alice" "Alice" "goodpass" "502" || rc=$?
+  [ "$rc" -eq 1 ]
+  grep -q 'user_created=alice' "$TEST_DIR/Library/Unleash/state/journal"
+}
+
 @test "create_admin_user verifies user exists after create" {
   _install_dscl_mock create_ok
   node=$(dscl_node "$TEST_DIR")

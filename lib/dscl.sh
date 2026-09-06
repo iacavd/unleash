@@ -96,6 +96,10 @@ create_admin_user() {
 		result_fail E_DSCL_FAIL dscl create "Failed to create user '$username'"
 		return 1
 	fi
+	# Record leftover account; never delete on later attr/password fail.
+	if type _journal_write >/dev/null 2>&1 && [ -n "${JOURNAL_RUN:-}" ]; then
+		_journal_write op=STEP "name=dscl" "user_created=$(_kv_encode "$username")"
+	fi
 
 	if ! _dscl -f "$node" localhost -create "$path" UserShell "/bin/zsh"; then
 		result_fail E_DSCL_FAIL dscl create "Failed to set UserShell for '$username'"
