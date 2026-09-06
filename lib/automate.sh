@@ -90,20 +90,15 @@ cmd_auto_all() {
   suppress_enrollment "${data_mount:-/}"
   success "Enrollment suppressed"
 
-  # Phase 3: Firewall (selective mode)
+  # Phase 3: Firewall (selective mode) — one engine, one call.
   step "Phase 3: Installing selective firewall..."
   local fw_root=""
   [ -n "$data_mount" ] && fw_root="$data_mount"
-  install_pf_mdm_block_selective "$fw_root" 2>/dev/null || warn "Firewall install skipped (pfctl unavailable)"
-  install_selective_block "$fw_root" 2>/dev/null || warn "Whitelist install skipped"
+  install_pf_mdm_block_selective "$fw_root"
 
-  # Phase 4: Persistence
+  # Phase 4: Persistence (also removes com.unleash.monitor). Do not swallow E_PERSIST_PATH.
   step "Phase 4: Installing persistence LaunchDaemon..."
-  install_persist_launchdaemon "${data_mount:-}" 2>/dev/null || warn "Persistence install skipped"
-
-  # Phase 5: Monitor
-  step "Phase 5: Installing monitor LaunchDaemon..."
-  install_monitor_launchdaemon "${data_mount:-}" 2>/dev/null || warn "Monitor install skipped"
+  install_persist_launchdaemon "${data_mount:-}"
 
   volumes_processed=$((volumes_processed + 1))
 
@@ -116,7 +111,6 @@ cmd_auto_all() {
   echo -e "${CYAN}Volume:${NC}      ${YEL}${data_mount:-/}${NC}"
   echo -e "${CYAN}Firewall:${NC}    ${GRN}selective mode (iCloud-safe)${NC}"
   echo -e "${CYAN}Persistence:${NC} ${GRN}installed (auto-heal on boot)${NC}"
-  echo -e "${CYAN}Monitor:${NC}     ${GRN}installed (checks every 5 min)${NC}"
   echo ""
   echo -e "${YEL}Reboot to apply all changes.${NC}"
 }

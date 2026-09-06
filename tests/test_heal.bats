@@ -18,6 +18,7 @@ setup() {
 }
 
 teardown() {
+  chmod -R u+w "$TEST_DIR" 2>/dev/null || true
   rm -rf "$TEST_DIR"
 }
 
@@ -141,7 +142,27 @@ teardown() {
   SCRIPT_DIR="$TEST_DIR/missing-src"
   mkdir -p "$SCRIPT_DIR"
   DATA_ROOT="$TEST_DIR"
-  install_persist_launchdaemon "$TEST_DIR" || true
+  st=0
+  persist_copy "$TEST_DIR" || st=$?
+  [ "$st" -eq 1 ]
+  [ "$RESULT_STATUS" = "fail" ]
+  [ "$RESULT_REASON" = "E_PERSIST_PATH" ]
+}
+
+@test "persist not-writable dest is status 1 E_PERSIST_PATH" {
+  USB=$(mktemp -d)
+  mkdir -p "$USB/lib"
+  printf '%s\n' '#!/bin/bash' > "$USB/unleash"
+  printf '%s\n' '# lib' > "$USB/lib/heal.sh"
+  SCRIPT_DIR="$USB"
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/Library/Unleash" "$TEST_DIR/Library/LaunchDaemons"
+  chmod a-w "$TEST_DIR/Library/Unleash"
+  st=0
+  persist_copy "$TEST_DIR" || st=$?
+  chmod u+w "$TEST_DIR/Library/Unleash" 2>/dev/null || true
+  rm -rf "$USB"
+  [ "$st" -eq 1 ]
   [ "$RESULT_STATUS" = "fail" ]
   [ "$RESULT_REASON" = "E_PERSIST_PATH" ]
 }

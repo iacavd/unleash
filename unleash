@@ -424,6 +424,7 @@ cmd_firewall() {
 		DATA_ROOT=""
 	fi
 	install_pf_mdm_block "$data_mount"
+	_fw_cmd_exit
 }
 
 cmd_firewall_broad() {
@@ -439,6 +440,7 @@ cmd_firewall_broad() {
 		DATA_ROOT=""
 	fi
 	install_pf_mdm_block_broad "$data_mount"
+	_fw_cmd_exit
 }
 
 cmd_firewall_off() {
@@ -501,23 +503,31 @@ cmd_check() {
 }
 
 cmd_monitor() {
-  local webhook="${UNLEASH_WEBHOOK:-}"
-  local args=()
+  # main re-feeds $1=monitor; dispatch on $2 / remaining positionals.
+  local sub=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      install|uninstall) args+=("$1"); shift ;;
-      --webhook) webhook="${2:-}"; shift 2 ;;
-      *) args+=("$1"); shift ;;
+      monitor|mn) shift ;;
+      install) sub=install; shift ;;
+      uninstall) sub=uninstall; shift ;;
+      --webhook)
+        DISCORD_WEBHOOK="${2:-}"
+        shift 2
+        ;;
+      *) shift ;;
     esac
   done
-  set -- "${args[@]+"${args[@]}"}"
-  if [ -n "$webhook" ]; then
-    DISCORD_WEBHOOK="$webhook"
-  fi
-  case "${1:-}" in
-    install)   cmd_persist ;;
+  case "$sub" in
+    install) cmd_persist ;;
     uninstall) cmd_unpersist ;;
-    *)         monitor_mdm ;;
+    *)
+      # Bare monitor must not start the old KeepAlive loop.
+      if is_persist_installed; then
+        info "Persist heal daemon is installed (monitor is an alias of persist)."
+      else
+        error_exit "ERROR: monitor is an alias of persist. Next: sudo ./unleash persist"
+      fi
+      ;;
   esac
 }
 

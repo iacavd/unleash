@@ -149,17 +149,24 @@ _persist_run_id() {
 _persist_cleanup_incomplete() {
 	local dir="$1"
 	local run="$2"
+	local plist_path="${3-}"
+	local sentinel="${4-}"
 	local marker="${dir}/state/created_by_run"
 	[ -f "$marker" ] || return 0
 	[ "$(cat "$marker")" = "$run" ] || return 0
 	rm -rf "$dir"
+	# created=1 only: drop plist/sentinel this run wrote, not a prior install.
+	[ -n "$plist_path" ] && rm -f "$plist_path"
+	[ -n "$sentinel" ] && rm -f "$sentinel"
 }
 
 _persist_fail() {
 	local dir="$1"
 	local run="$2"
 	local msg="$3"
-	_persist_cleanup_incomplete "$dir" "$run"
+	local plist_path="${4-}"
+	local sentinel="${5-}"
+	_persist_cleanup_incomplete "$dir" "$run" "$plist_path" "$sentinel"
 	result_fail E_PERSIST_PATH persist copy "$msg"
 	return 1
 }
@@ -228,52 +235,52 @@ persist_copy() {
 	step "Installing LaunchDaemon for boot-time persistence..."
 
 	if [ ! -f "$src" ]; then
-		_persist_fail "$unleash_dir" "$run_id" "source binary missing: $src"
+		_persist_fail "$unleash_dir" "$run_id" "source binary missing: $src" "$plist_path" "$sentinel"
 		return 1
 	fi
 
 	[ -d "$unleash_dir" ] || created=1
 
 	if ! mkdir -p "$unleash_dir/lib" "$unleash_dir/data" "$unleash_dir/logs" "$unleash_dir/state" "$plist_dir"; then
-		_persist_fail "$unleash_dir" "$run_id" "cannot create $unleash_dir"
+		_persist_fail "$unleash_dir" "$run_id" "cannot create $unleash_dir" "$plist_path" "$sentinel"
 		return 1
 	fi
 
 	if [ "$created" = 1 ]; then
 		if ! printf '%s\n' "$run_id" > "$unleash_dir/state/created_by_run"; then
-			_persist_fail "$unleash_dir" "$run_id" "cannot write created_by_run marker"
+			_persist_fail "$unleash_dir" "$run_id" "cannot write created_by_run marker" "$plist_path" "$sentinel"
 			return 1
 		fi
 	fi
 
 	if [ ! -w "$unleash_dir" ] || [ ! -w "$plist_dir" ]; then
-		_persist_fail "$unleash_dir" "$run_id" "not writable: $unleash_dir"
+		_persist_fail "$unleash_dir" "$run_id" "not writable: $unleash_dir" "$plist_path" "$sentinel"
 		return 1
 	fi
 
 	if [ "$script_dir" != "$unleash_dir" ]; then
 		if ! cp "$src" "$unleash_dir/unleash"; then
-			_persist_fail "$unleash_dir" "$run_id" "cannot copy unleash binary"
+			_persist_fail "$unleash_dir" "$run_id" "cannot copy unleash binary" "$plist_path" "$sentinel"
 			return 1
 		fi
 		local lib copied_lib=0
 		for lib in "$script_dir/lib/"*.sh; do
 			[ -f "$lib" ] || continue
 			if ! cp "$lib" "$unleash_dir/lib/"; then
-				_persist_fail "$unleash_dir" "$run_id" "cannot copy $lib"
+				_persist_fail "$unleash_dir" "$run_id" "cannot copy $lib" "$plist_path" "$sentinel"
 				return 1
 			fi
 			copied_lib=1
 		done
 		if [ "$copied_lib" -eq 0 ]; then
-			_persist_fail "$unleash_dir" "$run_id" "no lib/*.sh to copy"
+			_persist_fail "$unleash_dir" "$run_id" "no lib/*.sh to copy" "$plist_path" "$sentinel"
 			return 1
 		fi
 		local tsv
 		for tsv in mdm-ips.tsv mdm-agents.tsv; do
 			if [ -f "$script_dir/data/$tsv" ]; then
 				if ! cp "$script_dir/data/$tsv" "$unleash_dir/data/"; then
-					_persist_fail "$unleash_dir" "$run_id" "cannot copy data/$tsv"
+					_persist_fail "$unleash_dir" "$run_id" "cannot copy data/$tsv" "$plist_path" "$sentinel"
 					return 1
 				fi
 			fi
@@ -312,12 +319,12 @@ persist_copy() {
 </plist>
 PLIST
 	then
-		_persist_fail "$unleash_dir" "$run_id" "cannot write plist $plist_path"
+		_persist_fail "$unleash_dir" "$run_id" "cannot write plist $plist_path" "$plist_path" "$sentinel"
 		return 1
 	fi
 
 	if ! _persist_chmod_tree "$unleash_dir" "$plist_path"; then
-		_persist_fail "$unleash_dir" "$run_id" "chmod/chown failed"
+		_persist_fail "$unleash_dir" "$run_id" "chmod/chown failed" "$plist_path" "$sentinel"
 		return 1
 	fi
 
@@ -327,22 +334,36 @@ PLIST
 		printf 'installed=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		printf 'sha256=%s\n' "$sha"
 	} > "$sentinel"; then
-		_persist_fail "$unleash_dir" "$run_id" "cannot write sentinel"
+		_persist_fail "$unleash_dir" "$run_id" "cannot write sentinel" "$plist_path" "$sentinel"
 		return 1
 	fi
 
 	if _persist_is_live_os; then
 		local launchctl="${LAUNCHCTL:-/bin/launchctl}"
+		local loaded=0
+		local lc_err=""
 		if [ -x "$launchctl" ]; then
+			# bootout of a missing job is expected; bootstrap/load must succeed.
 			"$launchctl" bootout system/com.unleash.heal >/dev/null 2>&1 || \
 				"$launchctl" unload "$plist_path" >/dev/null 2>&1 || true
-			"$launchctl" bootstrap system "$plist_path" >/dev/null 2>&1 || \
-				"$launchctl" load "$plist_path" >/dev/null 2>&1 || true
+			lc_err=$("$launchctl" bootstrap system "$plist_path" 2>&1) && loaded=1 || true
+			if [ "$loaded" -eq 0 ]; then
+				lc_err=$("$launchctl" load "$plist_path" 2>&1) && loaded=1 || true
+			fi
 			"$launchctl" bootout system/com.unleash.monitor >/dev/null 2>&1 || \
 				"$launchctl" unload "$monitor_plist" >/dev/null 2>&1 || true
+		else
+			lc_err="launchctl not available"
 		fi
+		rm -f "$monitor_plist"
+		if [ "$loaded" -eq 0 ]; then
+			# Files stay so launchd can pick the plist up at next boot; this run is not ok.
+			result_fail E_LAUNCHCTL persist launchctl "launchctl bootstrap/load failed: ${lc_err}"
+			return 1
+		fi
+	else
+		rm -f "$monitor_plist"
 	fi
-	rm -f "$monitor_plist"
 
 	result_ok persist copy "LaunchDaemon written to $plist_path"
 	return 0

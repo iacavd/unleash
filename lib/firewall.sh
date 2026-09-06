@@ -215,16 +215,52 @@ _install_pf_anchor() {
 
 	step "Loading pf rules..."
 	local pfctl="${PFCTL:-/sbin/pfctl}"
+	local err="" st=0
 	if [ ! -x "$pfctl" ]; then
 		result_fail E_PFCTL_FAIL firewall load "pfctl not available"
-		return 1
+		return 0
 	fi
-	if ! "$pfctl" -e -f "$pf_conf" >/dev/null 2>&1; then
-		result_fail E_PFCTL_FAIL firewall load "pfctl -e -f failed"
-		return 1
+	# Load separately from enable: pfctl -e exits 1 when pf is already on.
+	st=0
+	err=$("$pfctl" -f "$pf_conf" 2>&1) || st=$?
+	if [ "$st" -ne 0 ]; then
+		result_fail E_PFCTL_FAIL firewall load "pfctl -f failed: ${err}"
+		return 0
+	fi
+	st=0
+	err=$("$pfctl" -e 2>&1) || st=$?
+	if [ "$st" -ne 0 ]; then
+		case "$err" in
+			*[Aa]lready\ enabled*) ;;
+			*)
+				result_fail E_PFCTL_FAIL firewall load "pfctl -e failed: ${err}"
+				return 0
+				;;
+		esac
 	fi
 	result_ok firewall load "pf enabled and rules loaded"
 	success "pf enabled and rules loaded"
+}
+
+# Standalone firewall command maps RESULT_* to process exit. Helpers stay D20 (return 0).
+_fw_cmd_exit() {
+	case "${RESULT_STATUS:-ok}" in
+		ok) return 0 ;;
+		skip)
+			case "${RESULT_REASON:-}" in
+				S_PF_RECOVERY) return 0 ;;
+				E_DNS_FAIL) exit 3 ;;
+				*) return 0 ;;
+			esac
+			;;
+		fail)
+			case "${RESULT_REASON:-}" in
+				E_PFCTL_FAIL) exit 3 ;;
+				*) exit 1 ;;
+			esac
+			;;
+	esac
+	return 0
 }
 
 install_pf_mdm_block_selective() {
@@ -241,6 +277,7 @@ install_pf_mdm_block_selective() {
 	local anchor_file
 	anchor_file="$(_fw_anchor_path "$root")"
 	pf_backup_anchor "$root"
+	_fw_drop_selective_leftover "$root"
 
 	local rules=""
 	local total=0
@@ -285,8 +322,10 @@ EOF
 
 	_install_pf_anchor "$root" "$anchor_file"
 
-	info "Selective mode: only MDM IPs are blocked."
-	info "iCloud, App Store, and Apple updates should still work."
+	if [ "$RESULT_STATUS" = "ok" ] || [ "$RESULT_REASON" = "S_PF_RECOVERY" ]; then
+		info "Selective mode: only MDM IPs are blocked."
+		info "iCloud, App Store, and Apple updates should still work."
+	fi
 }
 
 install_pf_mdm_block_broad() {

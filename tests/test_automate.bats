@@ -53,7 +53,12 @@ teardown() {
   [ -f "$TEST_DIR/Library/LaunchDaemons/com.unleash.heal.plist" ]
 }
 
-@test "cmd_auto_all installs monitor" {
-  install_monitor_launchdaemon "$TEST_DIR" 2>/dev/null || true
-  [ -f "$TEST_DIR/Library/LaunchDaemons/com.unleash.monitor.plist" ]
+@test "cmd_auto_all does not leave com.unleash.monitor after persist" {
+  DATA_ROOT="$TEST_DIR"
+  SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  mkdir -p "$TEST_DIR/Library/LaunchDaemons"
+  echo "old-monitor" > "$TEST_DIR/Library/LaunchDaemons/com.unleash.monitor.plist"
+  install_persist_launchdaemon "$TEST_DIR"
+  [ -f "$TEST_DIR/Library/LaunchDaemons/com.unleash.heal.plist" ]
+  [ ! -f "$TEST_DIR/Library/LaunchDaemons/com.unleash.monitor.plist" ]
 }

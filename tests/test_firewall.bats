@@ -132,3 +132,44 @@ teardown() {
     return 1
   fi
 }
+
+@test "Recovery S_PF_RECOVERY does not pfctl the Data conf" {
+  DATA_ROOT="$TEST_DIR"
+  PFCTL_LOG="$TEST_DIR/pfctl.log"
+  PFCTL="$TEST_DIR/fake-pfctl"
+  cat > "$PFCTL" <<EOF
+#!/bin/bash
+echo "\$@" >> "$PFCTL_LOG"
+exit 1
+EOF
+  chmod +x "$PFCTL"
+  is_recovery() { return 0; }
+  install_pf_mdm_block_selective "$TEST_DIR"
+  [ "$RESULT_REASON" = "S_PF_RECOVERY" ]
+  [ "$RESULT_STATUS" = "skip" ]
+  [ -f "$TEST_DIR/private/etc/pf.conf" ]
+  [ ! -f "$PFCTL_LOG" ]
+}
+
+@test "zero-IP path strips leftover com.unleash.selective" {
+  USB=$(mktemp -d)
+  mkdir -p "$USB/data" "$TEST_DIR/etc/pf.anchors" "$TEST_DIR/private/etc/pf.anchors"
+  printf '%s\n' '# domain	ipv4	ipv6	retrieved_at' > "$USB/data/mdm-ips.tsv"
+  echo leftover > "$TEST_DIR/etc/pf.anchors/com.unleash.selective"
+  echo leftover > "$TEST_DIR/private/etc/pf.anchors/com.unleash.selective"
+  printf '%s\n' 'anchor "com.unleash.selective"' > "$TEST_DIR/private/etc/pf.conf"
+  SCRIPT_DIR="$USB"
+  DATA_ROOT="$TEST_DIR"
+  _resolve_dns() { return 1; }
+  install_pf_mdm_block_selective "$TEST_DIR"
+  [ "$RESULT_REASON" = "E_DNS_FAIL" ]
+  [ ! -f "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm" ]
+  [ ! -f "$TEST_DIR/etc/pf.anchors/com.unleash.selective" ]
+  [ ! -f "$TEST_DIR/private/etc/pf.anchors/com.unleash.selective" ]
+  if grep -q 'com.unleash.selective' "$TEST_DIR/private/etc/pf.conf"; then
+    echo "selective leftover should be stripped on E_DNS_FAIL" >&2
+    rm -rf "$USB"
+    return 1
+  fi
+  rm -rf "$USB"
+}

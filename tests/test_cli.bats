@@ -83,6 +83,18 @@ setup() {
   echo "$output" | grep -Eq '17/8|17\.0\.0\.0/8|443'
 }
 
+@test "./unleash monitor (bare) does not start KeepAlive loop" {
+  run "$UNLEASH" monitor
+  echo "$output" | grep -qi persist
+  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+}
+
+@test "./unleash monitor install dispatches to persist not KeepAlive loop" {
+  run "$UNLEASH" monitor install
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -Eqi 'persist|sudo'
+}
+
 @test "parse_flags --volume at end of argv exits 1" {
   run parse_flags --volume
   [ "$status" -eq 1 ]
