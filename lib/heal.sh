@@ -30,16 +30,34 @@ heal_suppress() {
 		info "DEP activation record markers are clean"
 	fi
 
-	# 2. Hosts Block Check
-	if [ -f "$hosts" ]; then
-		if grep -q "iprofiles.apple.com" "$hosts" 2>/dev/null; then
-			info "Domain block active in $hosts"
-		else
-			warn "Domain block missing in $hosts (Apple MDM servers not redirected to 0.0.0.0)"
-			needs_heal=true
+	# 2. Hosts Block & Live DNS Resolution Check
+	local hosts_blocked=false
+	if [ -f "$hosts" ] && grep -q "iprofiles.apple.com" "$hosts" 2>/dev/null; then
+		hosts_blocked=true
+	fi
+
+	# Perform actual local DNS resolution check if on booted system
+	local live_resolved=false
+	if [ -z "$data_mount" ] || [ "$data_mount" = "/" ]; then
+		local resolved_ip=""
+		resolved_ip=$(dscacheutil -q host -a name iprofiles.apple.com 2>/dev/null | awk '/ip_address:/{print $2; exit}' || true)
+		if [ -z "$resolved_ip" ] && command -v host >/dev/null 2>&1; then
+			resolved_ip=$(host -W 1 iprofiles.apple.com 2>/dev/null | awk '/has address/{print $NF; exit}' || true)
 		fi
-	else
-		warn "Hosts file missing ($hosts)"
+
+		if [ -n "$resolved_ip" ] && [[ "$resolved_ip" != "0.0.0.0" && "$resolved_ip" != "127.0.0.1" ]]; then
+			live_resolved=true
+		fi
+	fi
+
+	if [ "$hosts_blocked" = true ] && [ "$live_resolved" = false ]; then
+		info "Domain block active in $hosts (and resolving to sinkhole 0.0.0.0)"
+	elif [ "$hosts_blocked" = true ] && [ "$live_resolved" = true ]; then
+		warn "Hosts contains block rules, but live DNS still resolves iprofiles.apple.com -> $resolved_ip (DNS-over-HTTPS or mDNSResponder cache active)"
+		needs_heal=true
+	elif [ "$hosts_blocked" = false ]; then
+		warn "Domain block missing in $hosts (Apple MDM servers not redirected to 0.0.0.0)"
+		[ "$live_resolved" = true ] && warn "  Live check: iprofiles.apple.com currently resolves to active Apple IP ($resolved_ip)"
 		needs_heal=true
 	fi
 
