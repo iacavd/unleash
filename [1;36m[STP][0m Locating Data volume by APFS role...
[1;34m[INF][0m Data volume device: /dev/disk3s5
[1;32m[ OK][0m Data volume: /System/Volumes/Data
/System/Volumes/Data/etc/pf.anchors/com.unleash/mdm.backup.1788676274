@@ -1,5 +1,0 @@
-# Unleash MDM block — selective mode (iCloud-safe)
-# Blocks only resolved MDM infrastructure IPs
-block drop out proto {tcp,udp} to {0.0.0.0}
-block drop out proto {tcp,udp} to {0.0.0.0}
-block drop out proto {tcp,udp} to {0.0.0.0}
