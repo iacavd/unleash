@@ -39,7 +39,27 @@ chmod +x /tmp/unleash && /tmp/unleash bypass
 
 ---
 
-## Commands
+## System Architecture
+
+Unleash uses a modular, defense-in-depth architecture spanning zero-touch boot payloads, APFS volume discovery, OpenDirectory user provisioning, kernel-level PF firewall anchors, APNs blocking, and self-healing LaunchDaemons.
+
+> 📊 **Explore the Interactive Architecture Diagram**: [docs/architecture/unleash-architecture.html](docs/architecture/unleash-architecture.html)
+> *(Features live theme switching, guided views, route tracing, and Prometheus metrics topology)*
+
+```mermaid
+graph TD
+    A[USB / Recovery Boot<br/>payloads/autorun.sh] -->|mount & unlock| B[Detection Engine<br/>lib/detect.sh]
+    M[Fleet Manifest<br/>lib/fleet.sh] -.->|provision| B
+    B -->|create admin| C[OpenDirectory User<br/>lib/dscl.sh]
+    B -->|apply rules| D[DEP Suppression<br/>lib/suppress.sh]
+    B -->|configure pf| E[PF Firewall Anchor<br/>lib/firewall.sh]
+    E -->|drop 17.0.0.0/8| F[APNs Push Block<br/>lib/security.sh]
+    D -->|auto-heal hook| G[Auto-Heal Daemon<br/>lib/heal.sh]
+    G -->|telemetry stream| H[Web UI & Prometheus<br/>lib/web.sh]
+    F -->|DROP TCP| I((Apple MDM & APNs<br/>Blocked at Kernel))
+```
+
+---
 
 ### bypass — Full MDM bypass (Recovery only)
 

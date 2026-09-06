@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Unleash macOS MDM Architecture & Automation Pipeline",
+    "output": "unleash-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "recovery-bypass",
+        "label": "Recovery Bypass & Setup",
+        "focus": ["usb-autorun", "detect-engine", "dscl-user", "dep-suppress"],
+        "note": "Initial zero-touch recovery bypass: detects volumes, creates local admin account, and suppresses DEP records."
+      },
+      {
+        "id": "kernel-firewall",
+        "label": "Kernel PF Firewall & APNs Drop",
+        "focus": ["pf-firewall", "apns-block", "apple-servers"],
+        "note": "Kernel-level traffic isolation: blocks MDM IP ranges and Apple Push Notification services to sever remote lock/wipe."
+      },
+      {
+        "id": "fleet-and-ops",
+        "label": "Fleet Ops & Monitoring",
+        "focus": ["fleet-engine", "persist-daemon", "web-metrics"],
+        "note": "Declarative fleet provisioning, background auto-heal, multi-channel webhook alerts, and Prometheus metrics."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "usb-autorun",
+      "type": "external",
+      "label": "USB / Recovery Boot",
+      "sublabel": "payloads/autorun.sh",
+      "pos": [40, 240],
+      "size": [140, 64],
+      "tag": "Zero-Touch"
+    },
+    {
+      "id": "detect-engine",
+      "type": "backend",
+      "label": "Detection Engine",
+      "sublabel": "lib/detect.sh",
+      "pos": [280, 240],
+      "size": [140, 64],
+      "tag": "APFS & FileVault"
+    },
+    {
+      "id": "dscl-user",
+      "type": "database",
+      "label": "Directory Service",
+      "sublabel": "lib/dscl.sh",
+      "pos": [520, 100],
+      "size": [140, 64],
+      "tag": "OpenDirectory User"
+    },
+    {
+      "id": "dep-suppress",
+      "type": "security",
+      "label": "DEP Suppression",
+      "sublabel": "lib/suppress.sh",
+      "pos": [520, 240],
+      "size": [140, 64],
+      "tag": "Hosts & Daemons"
+    },
+    {
+      "id": "pf-firewall",
+      "type": "security",
+      "label": "PF Firewall Filter",
+      "sublabel": "lib/firewall.sh",
+      "pos": [520, 380],
+      "size": [140, 64],
+      "tag": "Kernel Anchors"
+    },
+    {
+      "id": "apns-block",
+      "type": "security",
+      "label": "APNs Push Block",
+      "sublabel": "lib/security.sh",
+      "pos": [760, 380],
+      "size": [140, 64],
+      "tag": "Drop 17.0.0.0/8"
+    },
+    {
+      "id": "persist-daemon",
+      "type": "backend",
+      "label": "Auto-Heal Daemon",
+      "sublabel": "lib/heal.sh",
+      "pos": [760, 240],
+      "size": [140, 64],
+      "tag": "com.unleash.heal"
+    },
+    {
+      "id": "fleet-engine",
+      "type": "cloud",
+      "label": "Fleet Manifest Engine",
+      "sublabel": "lib/fleet.sh",
+      "pos": [280, 100],
+      "size": [140, 64],
+      "tag": "fleet.json"
+    },
+    {
+      "id": "web-metrics",
+      "type": "frontend",
+      "label": "Web UI & Metrics",
+      "sublabel": "lib/web.sh",
+      "pos": [1000, 240],
+      "size": [140, 64],
+      "tag": "Dashboard :8080"
+    },
+    {
+      "id": "apple-servers",
+      "type": "external",
+      "label": "Apple MDM & APNs",
+      "sublabel": "iprofiles.apple.com",
+      "pos": [1000, 380],
+      "size": [140, 64],
+      "tag": "Blocked at Kernel"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "macOS Target System & Kernel Subsystems",
+      "wraps": ["detect-engine", "dscl-user", "dep-suppress", "pf-firewall", "apns-block", "persist-daemon", "web-metrics"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Network Layer Protection (PF & Hosts)",
+      "wraps": ["dep-suppress", "pf-firewall", "apns-block"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "autorun-to-detect",
+      "from": "usb-autorun",
+      "to": "detect-engine",
+      "label": "mount & unlock",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fleet-to-detect",
+      "from": "fleet-engine",
+      "to": "detect-engine",
+      "label": "provision",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "detect-to-dscl",
+      "from": "detect-engine",
+      "to": "dscl-user",
+      "label": "create admin",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "detect-to-suppress",
+      "from": "detect-engine",
+      "to": "dep-suppress",
+      "label": "apply rules",
+      "variant": "emphasis"
+    },
+    {
+      "id": "detect-to-pf",
+      "from": "detect-engine",
+      "to": "pf-firewall",
+      "label": "configure pf",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "pf-to-apns",
+      "from": "pf-firewall",
+      "to": "apns-block",
+      "label": "apns anchor",
+      "variant": "security"
+    },
+    {
+      "id": "suppress-to-persist",
+      "from": "dep-suppress",
+      "to": "persist-daemon",
+      "label": "auto-heal hook",
+      "variant": "emphasis"
+    },
+    {
+      "id": "persist-to-web",
+      "from": "persist-daemon",
+      "to": "web-metrics",
+      "label": "metrics stream"
+    },
+    {
+      "id": "apns-to-apple",
+      "from": "apns-block",
+      "to": "apple-servers",
+      "label": "DROP TCP",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Provisioning & Detection",
+      "items": [
+        "USB Autorun payload boots into Recovery or Normal macOS",
+        "APFS role scanner resolves internal Data volume & prompts for FileVault unlock",
+        "Declarative fleet manifest engine deploys standardized configurations"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Suppression & Self-Healing",
+      "items": [
+        "Clears DEP activation records and modifies /etc/hosts",
+        "Overrides and disables enrollment LaunchDaemons",
+        "Background LaunchDaemon auto-heals after OS updates & upgrades"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Kernel Defense & Metrics",
+      "items": [
+        "PF firewall isolates MDM IP subnets (iCloud-safe selective mode)",
+        "APNs block anchor severs remote MDM lock/wipe signals",
+        "Prometheus metrics & Web UI provide live compliance monitoring"
+      ]
+    }
+  ]
+}
