@@ -58,4 +58,4 @@ precisam de acesso à rede.
 ## Divulgação Responsável
 
 Encontrou um problema de segurança?
-Veja a [Política de Segurança](https://github.com/mateussiqueira/unleash/blob/main/SECURITY.md).
+Veja a [Política de Segurança](https://github.com/iacavd/unleash/blob/main/SECURITY.md).

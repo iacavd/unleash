@@ -13,7 +13,7 @@ This tool modifies system configuration to suppress MDM enrollment. While design
 To report a vulnerability:
 
 1. **Do NOT** open a public issue
-2. Open a [security advisory](https://github.com/mateussiqueira/unleash/security/advisories) privately
+2. Open a [security advisory](https://github.com/iacavd/unleash/security/advisories) privately
 3. Or email the maintainer directly
 
 ## Safety Guarantees

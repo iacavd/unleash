@@ -34,7 +34,7 @@
   <text x="600" y="470" fill="#a6e3a1" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="24" font-weight="bold">MDM BYPASSED — reboot and enjoy</text>
 
   <!-- Footer -->
-  <text x="600" y="560" fill="#6c7086" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="18">github.com/mateussiqueira/unleash</text>
+  <text x="600" y="560" fill="#6c7086" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="18">github.com/iacavd/unleash</text>
 
   <!-- Cursor blink -->
   <rect x="380" y="226" width="14" height="26" fill="#cdd6f4" rx="3">

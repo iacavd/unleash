@@ -7,7 +7,7 @@ echo "From Recovery (external SSD):"
 echo '  "/Volumes/YourSSD/unleash/unleash" bypass'
 echo ""
 echo "From Recovery (one-liner, needs internet):"
-echo "  curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash -o /tmp/unleash && chmod +x /tmp/unleash && /tmp/unleash bypass"
+echo "  curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash -o /tmp/unleash && chmod +x /tmp/unleash && /tmp/unleash bypass"
 echo ""
 echo "From booted system (sudo needed):"
 echo "  sudo ./unleash heal        # fix after update"

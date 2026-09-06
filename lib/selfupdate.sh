@@ -1,4 +1,4 @@
-GPG_KEY_URL="https://raw.githubusercontent.com/mateussiqueira/unleash/main/.github/unleash.gpg"
+GPG_KEY_URL="https://raw.githubusercontent.com/iacavd/unleash/main/.github/unleash.gpg"
 
 import_gpg_key() {
   local tmp_key
@@ -77,7 +77,7 @@ do_self_update() {
     error_exit "curl required for update"
   fi
 
-  local repo="mateussiqueira/unleash"
+  local repo="iacavd/unleash"
   local api_url="https://api.github.com/repos/${repo}/releases/latest"
   local tmp_dir
   tmp_dir=$(mktemp -d)

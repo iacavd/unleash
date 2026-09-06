@@ -40,12 +40,12 @@ unleash replaces the original five bypass-mdm scripts with a single file that ha
 
 **Homebrew (easiest)**
 ```bash
-brew install mateussiqueira/unleash/unleash
+brew install iacavd/unleash/unleash
 ```
 
 **Direct download**
 ```bash
-curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash-standalone.sh -o unleash
+curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash-standalone.sh -o unleash
 chmod +x unleash
 ```
 
@@ -451,14 +451,14 @@ Use `--verbose` for debug messages and `--log-file <path>` to write everything t
 
 ## Links
 
-- [GitHub Repository](https://github.com/mateussiqueira/unleash)
-- [Full README](https://github.com/mateussiqueira/unleash/blob/main/README.md)
+- [GitHub Repository](https://github.com/iacavd/unleash)
+- [Full README](https://github.com/iacavd/unleash/blob/main/README.md)
 - [Architecture Guide](guide)
 - [FAQ](faq)
-- [Quick Reference (QUICKSTART.md)](https://github.com/mateussiqueira/unleash/blob/main/QUICKSTART.md)
-- [Changelog](https://github.com/mateussiqueira/unleash/blob/main/CHANGELOG.md)
-- [Contributing](https://github.com/mateussiqueira/unleash/blob/main/CONTRIBUTING.md)
-- [Code of Conduct](https://github.com/mateussiqueira/unleash/blob/main/CODE_OF_CONDUCT.md)
-- [Security Policy](https://github.com/mateussiqueira/unleash/blob/main/SECURITY.md)
-- [Discussions](https://github.com/mateussiqueira/unleash/discussions)
-- [Report a Bug](https://github.com/mateussiqueira/unleash/issues/new?template=bug_report.md)
+- [Quick Reference (QUICKSTART.md)](https://github.com/iacavd/unleash/blob/main/QUICKSTART.md)
+- [Changelog](https://github.com/iacavd/unleash/blob/main/CHANGELOG.md)
+- [Contributing](https://github.com/iacavd/unleash/blob/main/CONTRIBUTING.md)
+- [Code of Conduct](https://github.com/iacavd/unleash/blob/main/CODE_OF_CONDUCT.md)
+- [Security Policy](https://github.com/iacavd/unleash/blob/main/SECURITY.md)
+- [Discussions](https://github.com/iacavd/unleash/discussions)
+- [Report a Bug](https://github.com/iacavd/unleash/issues/new?template=bug_report.md)

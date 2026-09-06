@@ -207,7 +207,7 @@ The serial stays in ABM forever — but if the device never connects without pro
 1. Make sure you have `gpg` installed
 2. Import the signing key: `gpg --keyserver keys.openpgp.org --recv-key <KEY_ID>`
 3. Try `sudo ./unleash update` again
-4. Or download manually from [GitHub Releases](https://github.com/mateussiqueira/unleash/releases)
+4. Or download manually from [GitHub Releases](https://github.com/iacavd/unleash/releases)
 
 ---
 
@@ -219,8 +219,8 @@ Error: ... homebrew-core ...
 
 **Fix:** Make sure the tap is up to date:
 ```bash
-brew untap mateussiqueira/unleash
-brew tap mateussiqueira/unleash
+brew untap iacavd/unleash
+brew tap iacavd/unleash
 brew install unleash
 ```
 
@@ -279,6 +279,6 @@ sudo ./unleash demo
 
 ## Getting Help
 
-- [GitHub Issues](https://github.com/mateussiqueira/unleash/issues)
-- [Discussions](https://github.com/mateussiqueira/unleash/discussions)
-- [Security Policy](https://github.com/mateussiqueira/unleash/blob/main/SECURITY.md)
+- [GitHub Issues](https://github.com/iacavd/unleash/issues)
+- [Discussions](https://github.com/iacavd/unleash/discussions)
+- [Security Policy](https://github.com/iacavd/unleash/blob/main/SECURITY.md)

@@ -5,7 +5,7 @@
 ### July — v1.7.0 "Solidify"
 - [ ] **Resolve GitHub Actions billing** — re-enable CI/CD
 - [ ] **Fix CI pipeline** — all checks passing on every PR
-- [ ] **Homebrew audit** — `brew audit --strict` passes on `mateussiqueira/unleash/unleash`
+- [ ] **Homebrew audit** — `brew audit --strict` passes on `iacavd/unleash/unleash`
 - [ ] **Improve bats test coverage** — mock-based tests for firewall, monitor, vpn modules
 - [ ] **Add `--help` flag** per command (currently only global `-h`)
 
@@ -59,4 +59,4 @@
 
 ## How to contribute
 
-Pick any unchecked item, open an issue or discussion, and submit a PR. See [CONTRIBUTING.md](https://github.com/mateussiqueira/unleash/blob/main/CONTRIBUTING.md) for guidelines.
+Pick any unchecked item, open an issue or discussion, and submit a PR. See [CONTRIBUTING.md](https://github.com/iacavd/unleash/blob/main/CONTRIBUTING.md) for guidelines.

@@ -16,7 +16,7 @@ pkgs.stdenv.mkDerivation rec {
 
   meta = with pkgs.lib; {
     description = "Single-script MDM bypass for macOS";
-    homepage = "https://github.com/mateussiqueira/unleash";
+    homepage = "https://github.com/iacavd/unleash";
     license = licenses.mit;
     platforms = platforms.darwin;
     maintainers = [ maintainers.mateussiqueira ];

@@ -54,7 +54,7 @@ O Migration Assistant copia caches, preferências e launch agents do Mac antigo.
 
 ### Tem interface gráfica?
 
-Ainda não. A CLI é a interface principal. Um wrapper SwiftUI está no [roadmap](https://github.com/mateussiqueira/unleash/blob/main/ROADMAP.md).
+Ainda não. A CLI é a interface principal. Um wrapper SwiftUI está no [roadmap](https://github.com/iacavd/unleash/blob/main/ROADMAP.md).
 
 ### Qual é a licença?
 

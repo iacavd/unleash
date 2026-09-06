@@ -8,10 +8,10 @@ Ferramenta única para bypass/supressão de MDM no macOS. Funciona do Modo de Re
 
 ```bash
 # Homebrew (mais fácil)
-brew install mateussiqueira/unleash/unleash
+brew install iacavd/unleash/unleash
 
 # Download direto
-curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash-standalone.sh -o unleash
+curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash-standalone.sh -o unleash
 chmod +x unleash && sudo ./unleash
 ```
 

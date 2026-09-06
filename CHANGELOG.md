@@ -37,8 +37,8 @@
 ## [1.6.0] — 2026-06-20
 
 ### Added
-- **Homebrew tap**: `brew install mateussiqueira/unleash/unleash`
-- **GitHub Pages**: full command reference at https://mateussiqueira.github.io/unleash/
+- **Homebrew tap**: `brew install iacavd/unleash/unleash`
+- **GitHub Pages**: full command reference at https://iacavd.github.io/unleash/
 - **README.pt-BR.md**: Brazilian Portuguese translation
 - **Bats tests**: doctor, whitelist, config, check, history, uninstall modules
 - **docs/index.md**: landing page for GitHub Pages

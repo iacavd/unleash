@@ -58,4 +58,4 @@ network access.
 ## Responsible Disclosure
 
 Found a security issue?
-See the [Security Policy](https://github.com/mateussiqueira/unleash/blob/main/SECURITY.md).
+See the [Security Policy](https://github.com/iacavd/unleash/blob/main/SECURITY.md).

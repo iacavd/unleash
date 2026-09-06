@@ -40,12 +40,12 @@ unleash substitui os cinco scripts originais do bypass-mdm em um único arquivo 
 
 **Homebrew (mais fácil)**
 ```bash
-brew install mateussiqueira/unleash/unleash
+brew install iacavd/unleash/unleash
 ```
 
 **Download direto**
 ```bash
-curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash-standalone.sh -o unleash
+curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash-standalone.sh -o unleash
 chmod +x unleash
 ```
 
@@ -431,13 +431,13 @@ Use `--verbose` para mensagens de debug e `--log-file <caminho>` para escrever t
 
 ## Links
 
-- [Repositório GitHub](https://github.com/mateussiqueira/unleash)
-- [README completo](https://github.com/mateussiqueira/unleash/blob/main/README.md)
+- [Repositório GitHub](https://github.com/iacavd/unleash)
+- [README completo](https://github.com/iacavd/unleash/blob/main/README.md)
 - [Guia de Arquitetura](guide)
 - [FAQ](faq)
-- [Changelog](https://github.com/mateussiqueira/unleash/blob/main/CHANGELOG.md)
-- [Contribuindo](https://github.com/mateussiqueira/unleash/blob/main/CONTRIBUTING.md)
-- [Código de Conduta](https://github.com/mateussiqueira/unleash/blob/main/CODE_OF_CONDUCT.md)
-- [Política de Segurança](https://github.com/mateussiqueira/unleash/blob/main/SECURITY.md)
-- [Discussões](https://github.com/mateussiqueira/unleash/discussions)
-- [Reportar Bug](https://github.com/mateussiqueira/unleash/issues/new?template=bug_report.md)
+- [Changelog](https://github.com/iacavd/unleash/blob/main/CHANGELOG.md)
+- [Contribuindo](https://github.com/iacavd/unleash/blob/main/CONTRIBUTING.md)
+- [Código de Conduta](https://github.com/iacavd/unleash/blob/main/CODE_OF_CONDUCT.md)
+- [Política de Segurança](https://github.com/iacavd/unleash/blob/main/SECURITY.md)
+- [Discussões](https://github.com/iacavd/unleash/discussions)
+- [Reportar Bug](https://github.com/iacavd/unleash/issues/new?template=bug_report.md)

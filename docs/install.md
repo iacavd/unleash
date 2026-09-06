@@ -8,19 +8,19 @@ title: Installation — unleash
 ## Homebrew (easiest)
 
 ```bash
-brew tap mateussiqueira/unleash
+brew tap iacavd/unleash
 brew install unleash
 ```
 
 Or in one step:
 ```bash
-brew install mateussiqueira/unleash/unleash
+brew install iacavd/unleash/unleash
 ```
 
 ## Direct download
 
 ```bash
-curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash-standalone.sh -o unleash
+curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash-standalone.sh -o unleash
 chmod +x unleash
 sudo ./unleash init
 ```
@@ -34,14 +34,14 @@ sudo ./unleash init
 ## Via curl in Recovery (needs internet)
 
 ```bash
-curl -L https://raw.githubusercontent.com/mateussiqueira/unleash/main/unleash -o /tmp/unleash
+curl -L https://raw.githubusercontent.com/iacavd/unleash/main/unleash -o /tmp/unleash
 chmod +x /tmp/unleash && /tmp/unleash bypass
 ```
 
 ## Building from source
 
 ```bash
-git clone https://github.com/mateussiqueira/unleash.git
+git clone https://github.com/iacavd/unleash.git
 cd unleash
 bash examples/build-standalone.sh
 # Output: unleash-standalone.sh (~3200 lines)
