@@ -51,8 +51,9 @@ graph TD
     A[USB / Recovery Boot<br/>payloads/autorun.sh] -->|mount & unlock| B[Detection Engine<br/>lib/detect.sh]
     M[Fleet Manifest<br/>lib/fleet.sh] -.->|provision| B
     B -->|create admin| C[OpenDirectory User<br/>lib/dscl.sh]
-    B -->|apply rules| D[DEP Suppression<br/>lib/suppress.sh]
+    B -->|auto-wipe DEP| D[DEP Eradication & Suppression<br/>lib/suppress.sh]
     B -->|configure pf| E[PF Firewall Anchor<br/>lib/firewall.sh]
+    D -->|kill daemons| J[Live-OS Hardening<br/>lib/harden.sh]
     E -->|drop 17.0.0.0/8| F[APNs Push Block<br/>lib/security.sh]
     D -->|auto-heal hook| G[Auto-Heal Daemon<br/>lib/heal.sh]
     G -->|telemetry stream| H[Web UI & Prometheus<br/>lib/web.sh]

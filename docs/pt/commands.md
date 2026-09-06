@@ -9,11 +9,26 @@ title: Referência de Comandos — unleash
 
 | Comando | Descrição | Recovery | Iniciado |
 |---------|-----------|----------|----------|
+| `recovery` | Limpeza automática de registros DEP e supressão (mantém usuário) | ✓ | ✗ |
+| `wipe-dep` | Apaga apenas arquivos de configuração DEP do disco | ✓ | ✓ |
 | `bypass` | Bypass completo: cria usuário admin + suprime MDM | ✓ | ✗ |
 | `suppress` | Suprime registro sem criar um usuário | ✓ | ✓ |
 | `heal` | Reaplica supressão após atualizações do macOS | ✓ | ✓ |
 | `persist` | Instala LaunchDaemon para auto-recuperação na inicialização | ✓ | ✓ |
 | `unpersist` | Remove o LaunchDaemon de auto-recuperação | ✗ | ✓ |
+
+### `recovery`
+Processo automatizado de eliminação do registro DEP e supressão via Modo de Recuperação (Recovery). Remove arquivos `.cloudConfig*`, desativa daemons e preserva suas contas de usuário existentes.
+**Deve executar do Recovery.**
+```bash
+./unleash recovery
+```
+
+### `wipe-dep`
+Apaga fisicamente arquivos `.cloudConfig*` e notificações de registro do volume Data sem alterar hosts ou launchd.
+```bash
+./unleash wipe-dep
+```
 
 ### `bypass`
 Cria uma conta admin temporária e suprime todas as 5 camadas do MDM.

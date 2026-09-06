@@ -10,7 +10,7 @@
         "id": "recovery-bypass",
         "label": "Recovery Bypass & Setup",
         "focus": ["usb-autorun", "detect-engine", "dscl-user", "dep-suppress"],
-        "note": "Initial zero-touch recovery bypass: detects volumes, creates local admin account, and suppresses DEP records."
+        "note": "Recovery mode bypass: auto-wipes DEP records from disk, optionally creates local admin, and suppresses enrollment daemons."
       },
       {
         "id": "kernel-firewall",
@@ -61,7 +61,7 @@
       "sublabel": "lib/suppress.sh",
       "pos": [520, 240],
       "size": [140, 64],
-      "tag": "Hosts & Daemons"
+      "tag": "Wipe & Suppress"
     },
     {
       "id": "pf-firewall",
@@ -213,9 +213,9 @@
       "dot": "emerald",
       "title": "Suppression & Self-Healing",
       "items": [
-        "Clears DEP activation records and modifies /etc/hosts",
-        "Overrides and disables enrollment LaunchDaemons",
-        "Background LaunchDaemon auto-heals after OS updates & upgrades"
+        "Permanently erases .cloudConfig* records and resets DEP markers",
+        "Overrides and disables enrollment LaunchDaemons in launchd overrides",
+        "Background LaunchDaemon auto-heals after macOS updates & upgrades"
       ]
     },
     {

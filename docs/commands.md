@@ -9,11 +9,26 @@ title: Commands Reference — unleash
 
 | Command | Description | Recovery | Booted |
 |---------|-------------|----------|--------|
+| `recovery` | Auto-wipe DEP records & suppress (preserves existing users) | ✓ | ✗ |
+| `wipe-dep` | Wipe DEP cloud configuration records from disk | ✓ | ✓ |
 | `bypass` | Full bypass: create admin user + suppress MDM | ✓ | ✗ |
 | `suppress` | Suppress enrollment without creating a user | ✓ | ✓ |
 | `heal` | Re-apply suppression after macOS updates | ✓ | ✓ |
 | `persist` | Install LaunchDaemon for auto-heal on every boot | ✓ | ✓ |
 | `unpersist` | Remove the auto-heal LaunchDaemon | ✗ | ✓ |
+
+### `recovery`
+One-touch automated DEP eradication and suppression from macOS Recovery mode. Wipes on-disk `.cloudConfig*` records, disables enrollment daemons, blocks hosts, and preserves existing user accounts without creating new ones.
+**Must run from Recovery.**
+```bash
+./unleash recovery
+```
+
+### `wipe-dep`
+Physically unlinks `.cloudConfig*` and enrollment nag files from the target Data volume without modifying hosts or launchd overrides.
+```bash
+./unleash wipe-dep
+```
 
 ### `bypass`
 Creates a temporary admin account and suppresses all 5 layers of MDM.
