@@ -91,7 +91,7 @@ show_cmd_help() {
 		vpn-kill)   echo "Install pf kill-switch (blocks MDM outside VPN)." ;;
 		vpn-kill-remove) echo "Remove VPN kill-switch." ;;
 		vpn-kill-status) echo "Check VPN kill-switch status." ;;
-		auto-all)   echo "Automated deployment: bypass+firewall+persist+monitor (no prompts)." ;;
+		auto-all)   echo "Automated deployment: bypass+firewall+persist (no prompts)." ;;
 		apns-block) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
 		apns-unblock) echo "Removed. The old rule dropped TCP 443 to all of 17.0.0.0/8." ;;
 		version)    echo "Show version and exit." ;;

@@ -38,7 +38,7 @@ cmd_auto_all() {
   echo -e "${RED}╔══════════════════════════════════════════════════════════════╗${NC}"
   echo -e "${RED}║  ⚠  FULLY AUTOMATED MODE — NO PROMPTS                     ║${NC}"
   echo -e "${RED}║  This will bypass MDM, create an admin user, install       ║${NC}"
-  echo -e "${RED}║  persistence, firewall, and monitoring — all automatically.║${NC}"
+  echo -e "${RED}║  persistence and firewall — all automatically.             ║${NC}"
   echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
   echo ""
 
