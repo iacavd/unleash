@@ -6,7 +6,7 @@ VERSION="2.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui; do
+for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
 	_lib_path="$LIB_DIR/$_lib.sh"
 	if [ -f "$_lib_path" ]; then
 		source "$_lib_path"
@@ -631,6 +631,10 @@ main() {
 		webhook-test)     send_webhook_alert "${2:-generic}" "${3:-}" "${4:-Test message}" "${5:-Test Title}" ;;
 		simulate)         run_simulation "${2:-/}" ;;
 		tui|interactive)  launch_tui ;;
+		fleet-apply)      cmd_fleet_apply "$@" ;;
+		upgrade-os)       cmd_upgrade_os ;;
+		web)              cmd_web_server "${2:-8080}" ;;
+		web-stop)         cmd_web_stop ;;
 		auto-all)         cmd_auto_all "$@" ;;
 		reinstall|rei)
 			do_uninstall

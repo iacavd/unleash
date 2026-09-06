@@ -80,12 +80,8 @@ install_persist_launchdaemon() {
 	local root
 	root="$(_persist_mount_root "$data_mount")"
 
-	local unleash_src
-	if [ -n "$SCRIPT_DIR" ]; then
-		unleash_src="$SCRIPT_DIR/unleash"
-	else
-		unleash_src="$(cd "$(dirname "$0")" && pwd)/unleash"
-	fi
+	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+	local unleash_src="$script_dir/unleash"
 
 	step "Installing LaunchDaemon for boot-time persistence..."
 
@@ -93,7 +89,12 @@ install_persist_launchdaemon() {
 	local plist_path="${plist_dir}/com.unleash.heal.plist"
 	local sentinel="${plist_dir}/${PERSIST_SENTINEL}"
 
-	mkdir -p "$plist_dir"
+	mkdir -p "$plist_dir" 2>/dev/null || true
+
+	if [ ! -w "$plist_dir" ]; then
+		warn "Cannot write to $plist_dir (requires root privileges)."
+		return 0
+	fi
 
 	cat > "$plist_path" <<- PLIST
 	<?xml version="1.0" encoding="UTF-8"?>
