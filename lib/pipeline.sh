@@ -3,6 +3,7 @@
 # Skeleton only: no mutator switch (hosts/persist/suppress live in later PRs).
 
 JOURNAL_RUN="${JOURNAL_RUN:-}"
+JOURNAL_DEGRADED="${JOURNAL_DEGRADED:-0}"
 
 _state_dir() {
 	printf '%s\n' "$(unleash_root)/state"
@@ -12,11 +13,16 @@ _journal_path() {
 	printf '%s\n' "$(_state_dir)/journal"
 }
 
+_lock_dir() {
+	printf '%s\n' "$(_state_dir)/lock.d"
+}
+
+# Spec kv file (pid= ts=). Mutex is lock.d via mkdir.
 _lock_path() {
 	printf '%s\n' "$(_state_dir)/lock"
 }
 
-# space=%20 %= %25 ==%3D newline=%0A quote=%22 slash=%2F (volume paths in the spec example).
+# space=%20 %= %25 ==%3D newline=%0A quote=%22 slash=%2F tab=%09 CR=%0D.
 _kv_encode() {
 	local s="${1-}"
 	local i=0
@@ -30,6 +36,8 @@ _kv_encode() {
 			' ') out="${out}%20" ;;
 			=) out="${out}%3D" ;;
 			$'\n') out="${out}%0A" ;;
+			$'\t') out="${out}%09" ;;
+			$'\r') out="${out}%0D" ;;
 			'"') out="${out}%22" ;;
 			/) out="${out}%2F" ;;
 			*) out="${out}${c}" ;;
@@ -56,6 +64,8 @@ _kv_decode() {
 				25) out="${out}%" ;;
 				3D|3d) out="${out}=" ;;
 				0A|0a) out="${out}"$'\n' ;;
+				09) out="${out}"$'\t' ;;
+				0D|0d) out="${out}"$'\r' ;;
 				22) out="${out}\"" ;;
 				2F|2f) out="${out}/" ;;
 				*)
@@ -118,6 +128,7 @@ journal_begin() {
 	local cmd="${1:-apply}"
 	local volume="${2:-}"
 	JOURNAL_RUN=$(_journal_new_run_id)
+	JOURNAL_DEGRADED=0
 	_journal_write op=BEGIN "cmd=$(_kv_encode "$cmd")" "volume=$(_kv_encode "$volume")"
 }
 
@@ -138,9 +149,13 @@ journal_snap() {
 	_journal_write op=SNAP "id=$(_kv_encode "$id")"
 }
 
+# WAL-close. Clears state/degraded only on success (no skip-class reasons this run).
+# Degraded apply: journal_degraded reasons next; journal_commit — file stays for heal.
 journal_commit() {
 	_journal_write op=COMMIT
-	journal_degraded_clear
+	if [ "${JOURNAL_DEGRADED:-0}" != 1 ]; then
+		journal_degraded_clear
+	fi
 }
 
 journal_rollback() {
@@ -154,10 +169,12 @@ journal_abort() {
 journal_degraded() {
 	local reasons="${1:-}"
 	local next="${2:-}"
+	JOURNAL_DEGRADED=1
 	_journal_write op=DEGRADED "reasons=$(_kv_encode "$reasons")"
 	journal_degraded_write "$reasons" "$next"
 }
 
+# Print-only. Caller: JOURNAL_RUN=$(journal_resume_scan)
 # Last op=BEGIN whose run= has no later COMMIT/ROLLBACK/ABORT. Empty if none.
 journal_resume_scan() {
 	local journal closed last line op run
@@ -189,9 +206,6 @@ journal_resume_scan() {
 			*) last="$run" ;;
 		esac
 	done < "$journal"
-	if [ -n "$last" ]; then
-		JOURNAL_RUN="$last"
-	fi
 	printf '%s' "$last"
 }
 
@@ -246,14 +260,15 @@ _lock_pid() {
 }
 
 pipeline_lock_acquire() {
-	local dir lock pid ts tmp
+	local dir lockd lock pid ts
 	dir="$(_state_dir)"
 	mkdir -p "$dir" || {
-		result_fail E_LOCKED pipeline lock "cannot create state dir $dir"
+		result_fail E_DISK_FULL pipeline lock "cannot create state dir $dir"
 		return 1
 	}
+	lockd="$dir/lock.d"
 	lock="$dir/lock"
-	if [ -f "$lock" ]; then
+	if [ -d "$lockd" ] || [ -f "$lock" ]; then
 		pid=$(_lock_pid "$lock")
 		case "$pid" in
 			''|*[!0-9]*) ;;
@@ -264,33 +279,37 @@ pipeline_lock_acquire() {
 				fi
 				;;
 		esac
+		rm -rf "$lockd"
+		rm -f "$lock"
+	fi
+	# mkdir without -p is the exclusive token. Dispatcher already installs EXIT release.
+	if ! mkdir "$lockd"; then
+		if [ -d "$lockd" ]; then
+			result_fail E_LOCKED pipeline lock "heal/apply already running"
+			return 1
+		fi
+		result_fail E_DISK_FULL pipeline lock "cannot create lock dir $lockd"
+		return 1
 	fi
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	tmp="${lock}.tmp.$$"
-	printf 'pid=%s ts=%s\n' "$$" "$(_kv_encode "$ts")" > "$tmp" || {
-		rm -f "$tmp"
-		result_fail E_LOCKED pipeline lock "cannot write lock"
+	if ! printf 'pid=%s ts=%s\n' "$$" "$(_kv_encode "$ts")" > "$lock"; then
+		rm -rf "$lockd"
+		rm -f "$lock"
+		result_fail E_DISK_FULL pipeline lock "cannot write lock"
 		return 1
-	}
-	mv "$tmp" "$lock" || {
-		rm -f "$tmp"
-		result_fail E_LOCKED pipeline lock "cannot install lock"
-		return 1
-	}
-	trap 'pipeline_lock_release' EXIT
+	fi
 	return 0
 }
 
 pipeline_lock_release() {
-	local lock pid
+	local lock lockd pid
 	lock="$(_lock_path)"
-	if [ ! -f "$lock" ]; then
-		return 0
-	fi
+	lockd="$(_lock_dir)"
+	[ -f "$lock" ] || return 0
 	pid=$(_lock_pid "$lock")
-	if [ "$pid" = "$$" ]; then
-		rm -f "$lock"
-	fi
+	[ "$pid" = "$$" ] || return 0
+	rm -f "$lock"
+	rm -rf "$lockd"
 	return 0
 }
 

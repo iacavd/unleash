@@ -46,6 +46,13 @@ teardown() {
   [ "$(_kv_decode "$encoded")" = "/Volumes/Macintosh HD - Data" ]
 }
 
+@test "encode/decode tab and CR" {
+  input=$(printf 'a\tb\rc')
+  encoded=$(_kv_encode "$input")
+  [ "$encoded" = "a%09b%0Dc" ]
+  [ "$(_kv_decode "$encoded")" = "$input" ]
+}
+
 @test "WAL start then ok" {
   journal_begin apply "/Volumes/Macintosh HD - Data"
   journal_step hosts start
@@ -86,9 +93,52 @@ teardown() {
   journal_begin apply /vol
   unfinished="$JOURNAL_RUN"
   journal_step hosts start
+  JOURNAL_RUN="sentinel"
   got=$(journal_resume_scan)
   [ "$got" = "$unfinished" ]
+  [ "$JOURNAL_RUN" = "sentinel" ]
+  JOURNAL_RUN="$got"
   journal_commit
   got=$(journal_resume_scan)
   [ -z "$got" ]
+}
+
+@test "journal_degraded then journal_commit leaves degraded file" {
+  journal_begin apply /vol
+  journal_degraded S_SIP_LIVE "Boot Recovery"
+  [ -f "$(_state_dir)/degraded" ]
+  journal_commit
+  [ -f "$(_state_dir)/degraded" ]
+  grep -q 'op=DEGRADED' "$(_journal_path)"
+  grep -q 'op=COMMIT' "$(_journal_path)"
+}
+
+@test "success journal_commit clears degraded" {
+  journal_begin apply /vol
+  journal_degraded S_SIP_LIVE "x"
+  journal_commit
+  [ -f "$(_state_dir)/degraded" ]
+  journal_begin apply /vol
+  journal_commit
+  [ ! -f "$(_state_dir)/degraded" ]
+}
+
+@test "EXIT trap releases lock" {
+  (
+    trap 'pipeline_lock_release' EXIT
+    pipeline_lock_acquire
+    [ -d "$(_lock_dir)" ]
+    [ -f "$(_lock_path)" ]
+  )
+  [ ! -d "$(_lock_dir)" ]
+  [ ! -f "$(_lock_path)" ]
+}
+
+@test "pipeline_rollback_files restores hosts" {
+  mkdir -p "$DATA_ROOT/private/etc"
+  echo "original hosts" > "$DATA_ROOT/private/etc/hosts"
+  backup_state "$DATA_ROOT"
+  echo "mutated hosts" > "$DATA_ROOT/private/etc/hosts"
+  pipeline_rollback_files "$SNAPSHOT_ID" "$DATA_ROOT"
+  [ "$(cat "$DATA_ROOT/private/etc/hosts")" = "original hosts" ]
 }

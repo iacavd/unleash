@@ -297,16 +297,23 @@ cmd_backup() {
 	header "Backup"
 	local data_mount
 	data_mount=$(resolve_data_volume)
+	is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 	backup_state "$data_mount"
 }
 
 cmd_restore() {
 	# Uses UNLEASH_SNAPSHOT when set.
 	header "Restore"
+	local data_mount
+	data_mount=$(resolve_data_volume)
+	is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 	restore_state
 }
 
 cmd_backup_list() {
+	local data_mount
+	data_mount=$(resolve_data_volume)
+	is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 	backup_list
 }
 
@@ -548,6 +555,7 @@ cmd_interactive_recovery() {
 
 	local data_mount
 	data_mount=$(resolve_data_volume)
+	is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 	echo ""
 
 	local cfg="${data_mount}/private/var/db/ConfigurationProfiles/Settings"
@@ -662,9 +670,13 @@ cmd_interactive_normal() {
 		"Backup state")
 			local data_mount
 			data_mount=$(resolve_data_volume)
+			is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 			backup_state "$data_mount"
 			;;
 		"Restore from backup")
+			local data_mount
+			data_mount=$(resolve_data_volume)
+			is_recovery && DATA_ROOT="$data_mount" || DATA_ROOT=""
 			restore_state
 			;;
 		"Exit")

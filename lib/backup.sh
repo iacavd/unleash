@@ -31,7 +31,13 @@ check_disk_space() {
 	available_kb=$(_backup_available_kb "$data_mount")
 	available_kb="${available_kb%%[$'\n\r']*}"
 	case "$available_kb" in
-		''|*[!0-9]*) return 0 ;;
+		''|*[!0-9]*)
+			if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] || [ ! -t 0 ]; then
+				result_fail E_DISK_FULL backup disk "cannot determine free space on ${data_mount}"
+				return 1
+			fi
+			return 0
+			;;
 	esac
 	if [ "$available_kb" -lt "$needed_kb" ]; then
 		if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] || [ ! -t 0 ]; then
@@ -290,13 +296,32 @@ rollback_plist() {
 rollback_dep() {
 	local snap_id="$1"
 	local data_mount="$2"
-	local snap dest
+	local snap dest parent tmp bak
 	snap=$(_snapshot_dir_for "$snap_id") || return 1
 	[ -d "$snap/ConfigurationProfiles" ] || return 0
-	dest="$data_mount/private/var/db/ConfigurationProfiles/Settings"
-	rm -rf "$dest"
-	mkdir -p "$dest" || return 1
-	cp -R "$snap/ConfigurationProfiles/." "$dest/" || return 1
+	parent="$data_mount/private/var/db/ConfigurationProfiles"
+	dest="$parent/Settings"
+	tmp="$parent/Settings.unleash-new.$$"
+	bak="$parent/Settings.unleash-old.$$"
+	mkdir -p "$parent" || return 1
+	rm -rf "$tmp" "$bak"
+	mkdir -p "$tmp" || return 1
+	if ! "${CP:-cp}" -R "$snap/ConfigurationProfiles/." "$tmp/"; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if [ -e "$dest" ]; then
+		if ! mv "$dest" "$bak"; then
+			rm -rf "$tmp"
+			return 1
+		fi
+	fi
+	if ! mv "$tmp" "$dest"; then
+		[ -e "$bak" ] && mv "$bak" "$dest"
+		rm -rf "$tmp"
+		return 1
+	fi
+	rm -rf "$bak"
 	return 0
 }
 
@@ -383,6 +408,13 @@ restore_state() {
 	success "Restore complete"
 }
 
+# Newest-first snapshot directories, one path per line (paths may contain spaces).
+_snapshot_list_newest_first() {
+	local root="$1"
+	[ -d "$root" ] || return 0
+	ls -1d "$root"/????-??-??_??-??-?? 2>/dev/null | sort -r
+}
+
 backup_list() {
 	header "Available Backups"
 	local found=0
@@ -390,14 +422,17 @@ backup_list() {
 
 	root=$(_snapshot_root)
 	if [ -d "$root" ]; then
-		for snapshot in $(ls -1d "$root"/????-??-??_??-??-?? 2>/dev/null | sort -r); do
+		while IFS= read -r snapshot; do
+			[ -n "$snapshot" ] || continue
 			[ -d "$snapshot" ] || continue
 			ts=$(cat "$snapshot/timestamp" 2>/dev/null || basename "$snapshot")
 			vol=$(cat "$snapshot/data_volume_path" 2>/dev/null || echo "unknown")
 			file_count=$(find "$snapshot" -type f 2>/dev/null | wc -l | tr -d ' ')
 			echo -e "  ${GRN}$ts${NC}  volume=$vol  files=$file_count"
 			found=$((found + 1))
-		done
+		done <<EOF
+$(_snapshot_list_newest_first "$root")
+EOF
 	fi
 
 	legacy=$(_legacy_backup_dir)
@@ -422,17 +457,20 @@ backup_list() {
 
 backup_rotate() {
 	local max="${BACKUP_RETENTION:-5}"
-	local root snapshots snapshot count
+	local root snapshot count
 	root=$(_snapshot_root)
-	snapshots=$(ls -1d "$root"/????-??-??_??-??-?? 2>/dev/null | sort -r)
 	count=0
-	for snapshot in $snapshots; do
+	while IFS= read -r snapshot; do
+		[ -n "$snapshot" ] || continue
+		[ -d "$snapshot" ] || continue
 		count=$((count + 1))
 		if [ "$count" -gt "$max" ]; then
 			debug "Rotating old backup: $snapshot"
 			rm -rf "$snapshot"
 		fi
-	done
+	done <<EOF
+$(_snapshot_list_newest_first "$root")
+EOF
 }
 
 has_backup() {
