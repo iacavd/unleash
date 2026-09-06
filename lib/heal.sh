@@ -22,10 +22,14 @@ heal_suppress() {
 				| grep -ioE 'https?://[a-z0-9._-]+' | sed -E 's#https?://##' \
 				| sort -u | grep -viE '(^|\.)apple\.com$' | head -1 || true)
 		fi
-		warn "DEP activation record found at $cfg"
-		[ -n "$org" ] && warn "  Organization: $org"
-		[ -n "$mdm_host" ] && warn "  MDM Server:   $mdm_host"
-		needs_heal=true
+		if [ -n "$org" ] || [ -n "$mdm_host" ] || ! plutil -p "$cfg/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+			warn "DEP activation record found at $cfg"
+			[ -n "$org" ] && warn "  Organization: $org"
+			[ -n "$mdm_host" ] && warn "  MDM Server:   $mdm_host"
+			needs_heal=true
+		else
+			info "DEP cloud check blocked (CloudConfigFetchError logged — domain block active)"
+		fi
 	else
 		info "DEP activation record markers are clean"
 	fi
@@ -63,9 +67,15 @@ heal_suppress() {
 
 	# 3. LaunchDaemons Disabled Overrides Check
 	local all_daemons=(
+		"com.apple.ManagedClient"
 		"com.apple.ManagedClient.enroll"
 		"com.apple.ManagedClient.cloudConfiguration"
+		"com.apple.ManagedClientAgent"
+		"com.apple.ManagedClientAgent.agent"
+		"com.apple.mdmclient"
+		"com.apple.mdmclient.daemon"
 		"com.apple.mdmclient.daemon.runatboot"
+		"com.apple.mdmclient.agent"
 		"com.apple.activationd"
 	)
 	if [ -f "$ldp" ]; then
@@ -82,7 +92,7 @@ heal_suppress() {
 			done
 			needs_heal=true
 		else
-			info "All 4 enrollment daemons disabled"
+			info "All ${#all_daemons[@]} enrollment daemons disabled"
 		fi
 	else
 		warn "Launchd disabled overrides plist missing ($ldp)"
@@ -90,6 +100,14 @@ heal_suppress() {
 	fi
 
 	if [ "$needs_heal" = false ]; then
+		# Ensure PF firewall is active if configured
+		if [ -z "$data_mount" ] || [ "$data_mount" = "/" ]; then
+			if [ -f "/etc/pf.conf" ] && grep -q "com.unleash" "/etc/pf.conf" 2>/dev/null; then
+				if command -v pfctl &>/dev/null; then
+					pfctl -e -f /etc/pf.conf 2>/dev/null || true
+				fi
+			fi
+		fi
 		success "MDM suppression intact — no action needed."
 		return 0
 	fi
@@ -97,6 +115,15 @@ heal_suppress() {
 	echo ""
 	info "Applying remediation to restore MDM suppression..."
 	suppress_enrollment "$data_mount"
+
+	# Ensure PF firewall is re-enabled if configured
+	if [ -z "$data_mount" ] || [ "$data_mount" = "/" ]; then
+		if [ -f "/etc/pf.conf" ] && grep -q "com.unleash" "/etc/pf.conf" 2>/dev/null; then
+			if command -v pfctl &>/dev/null; then
+				pfctl -e -f /etc/pf.conf 2>/dev/null || true
+			fi
+		fi
+	fi
 	success "MDM suppression restored successfully."
 }
 

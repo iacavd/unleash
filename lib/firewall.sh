@@ -191,16 +191,22 @@ pf_status() {
 	if command -v pfctl &>/dev/null; then
 		pfctl -si 2>/dev/null | grep -E "Status|Enabled" || echo "  pf not enabled"
 		echo ""
-		local rules
+		local rules=""
 		rules=$(pfctl -a "$FIREWALL_ANCHOR" -s rules 2>/dev/null || true)
+		local sel_rules=""
+		sel_rules=$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)
 		if [ -n "$rules" ]; then
-			info "Unleash MDM anchor rules:"
+			info "Unleash MDM anchor rules ($FIREWALL_ANCHOR):"
 			echo "$rules" | sed 's/^/  /'
 			if echo "$rules" | grep -q "17.0.0.0/8"; then
 				info "Mode: BROAD (all Apple IPs blocked)"
 			else
 				info "Mode: SELECTIVE (only MDM IPs blocked)"
 			fi
+		elif [ -n "$sel_rules" ]; then
+			info "Unleash selective anchor rules (com.unleash.selective):"
+			echo "$sel_rules" | sed 's/^/  /'
+			info "Mode: SELECTIVE (whitelist mode — MDM endpoints blocked, iCloud safe)"
 		else
 			info "No Unleash MDM anchor loaded"
 		fi

@@ -73,9 +73,14 @@ suppress_enrollment() {
 	      "$cfg/.cloudConfigTimerCheck" \
 	      "$cfg/.cloudConfigProfileInstalled" \
 	      "$cfg/com.apple.mdm.depnag.plist" \
-	      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null
-	touch "$cfg/.cloudConfigRecordNotFound"
-	success "Cached record cleared; bypass markers set"
+	      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
+	touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
+	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+		info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
+		info "To delete the on-disk file record, boot into Recovery and run: ./unleash bypass"
+	else
+		success "Cached record cleared; bypass markers set"
+	fi
 
 	step "Cleaning user-level MDM artifacts..."
 	local home
@@ -101,16 +106,24 @@ suppress_enrollment() {
 	step "Disabling enrollment daemons..."
 	mkdir -p "$(dirname "$ldp")"
 	[ -f "$ldp" ] || printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' >"$ldp"
+	local disabled_count=0
 	for label in \
+		com.apple.ManagedClient \
 		com.apple.ManagedClient.enroll \
 		com.apple.ManagedClient.cloudConfiguration \
+		com.apple.ManagedClientAgent \
+		com.apple.ManagedClientAgent.agent \
+		com.apple.mdmclient \
+		com.apple.mdmclient.daemon \
 		com.apple.mdmclient.daemon.runatboot \
+		com.apple.mdmclient.agent \
 		com.apple.activationd; do
 		$PB -c "Add :$label bool true" "$ldp" 2>/dev/null \
-			|| $PB -c "Set :$label true" "$ldp" 2>/dev/null
+			|| $PB -c "Set :$label true" "$ldp" 2>/dev/null || true
 		info "disabled $label"
+		disabled_count=$((disabled_count + 1))
 	done
-	success "Enrollment daemons disabled (4 overrides)"
+	success "Enrollment daemons disabled ($disabled_count overrides)"
 
 	touch "$setupdone" 2>/dev/null || true
 }

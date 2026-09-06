@@ -21,7 +21,12 @@ generate_report_brief() {
   local issues=0
 
   if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
-    risk="CRITICAL"; issues=$((issues + 1))
+    local org=""
+    org=$(plutil -convert xml1 -o - "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null \
+      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+    if [ -n "$org" ] || ! plutil -p "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+      risk="CRITICAL"; issues=$((issues + 1))
+    fi
   fi
   if command -v profiles &>/dev/null; then
     local pc
@@ -31,12 +36,17 @@ generate_report_brief() {
     pc="${pc:-0}"
     [ "$pc" -gt 0 ] && { risk="MEDIUM"; issues=$((issues + 1)); }
   fi
-  ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd)" | grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
+  ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
 
   local persist="no"
   [ -f "/Library/LaunchDaemons/com.unleash.heal.plist" ] && persist="yes"
   local fw="no"
-  command -v pfctl &>/dev/null && pfctl -a "com.unleash/mdm" -s rules 2>/dev/null | grep -q "block" && fw="yes"
+  if command -v pfctl &>/dev/null; then
+    local fw_rules=""
+    fw_rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
+    fw_rules="${fw_rules}$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)"
+    echo "$fw_rules" | grep -q "block" && fw="yes"
+  fi
 
   echo "unleash v${VERSION} | risk=$risk issues=$issues persist=$persist firewall=$fw | $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 }
@@ -68,10 +78,16 @@ generate_report_full() {
 
   local cfg="/private/var/db/ConfigurationProfiles/Settings"
   if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-    local org
+    local org=""
     org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
       | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
-    echo -e "  ${RED}DEP record: FOUND${org:+ (Organization: $org)}${NC}"
+    if [ -n "$org" ]; then
+      echo -e "  ${RED}DEP record: FOUND (Organization: $org)${NC}"
+    elif plutil -p "$cfg/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+      echo -e "  ${GRN}DEP record: Blocked (CloudConfigFetchError logged — domain sinkhole active)${NC}"
+    else
+      echo -e "  ${YEL}DEP record: present${NC}"
+    fi
   else
     echo -e "  ${GRN}DEP record: clean${NC}"
   fi
@@ -171,7 +187,7 @@ generate_report_full() {
 
   echo -e "${CYAN}─── Running MDM Processes ──────────────────────────────────${NC}"
   local procs
-  procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep || true)
+  procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || true)
   if [ -n "$procs" ]; then
     echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
   else
@@ -211,7 +227,12 @@ generate_report_json() {
 
   local has_dep="false"
   if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
-    has_dep="true"
+    local org=""
+    org=$(plutil -convert xml1 -o - "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null \
+      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+    if [ -n "$org" ] || ! plutil -p "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+      has_dep="true"
+    fi
   fi
   report="${report}  \"dep_record_found\": $has_dep,\n"
 

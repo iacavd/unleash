@@ -19,11 +19,16 @@ cmd_suggest() {
   fi
 
   local cfg_dir="/private/var/db/ConfigurationProfiles/Settings"
-  if [ -d "$cfg_dir" ]; then
-    if [ -f "$cfg_dir/.cloudConfigRecordFound" ]; then
-      echo -e "${YEL}⚠ DEP record still present${NC}"
+  if [ -d "$cfg_dir" ] && [ -f "$cfg_dir/.cloudConfigRecordFound" ]; then
+    local org=""
+    org=$(plutil -convert xml1 -o - "$cfg_dir/.cloudConfigRecordFound" 2>/dev/null \
+      | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+    if [ -n "$org" ] || ! plutil -p "$cfg_dir/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+      echo -e "${YEL}⚠ DEP record present${NC}"
       score=$((score + 10))
-      recommendations="$recommendations\n  - Run 'suppress' to clear DEP markers"
+      recommendations="$recommendations\n  - Run 'bypass' from Recovery to clear DEP markers"
+    else
+      echo -e "${GRN}✓ DEP cloud check blocked (sinkhole active)${NC}"
     fi
   fi
 
@@ -37,7 +42,10 @@ cmd_suggest() {
   fi
 
   if command -v pfctl &>/dev/null; then
-    if pfctl -a "com.unleash/mdm" -s rules 2>/dev/null | grep -q "block"; then
+    local fw_rules=""
+    fw_rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
+    fw_rules="${fw_rules}$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)"
+    if echo "$fw_rules" | grep -q "block"; then
       echo -e "${GRN}✓ pf firewall active${NC}"
     fi
   fi

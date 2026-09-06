@@ -30,7 +30,9 @@ LAST_STATE=""
 while true; do
   STATE="clean"
   if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
-    STATE="dirty"
+    if plutil -p "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null | grep -qi "OrganizationName"; then
+      STATE="dirty"
+    fi
   fi
   if [ "$STATE" != "$LAST_STATE" ] && [ "$STATE" = "dirty" ]; then
     curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \

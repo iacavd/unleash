@@ -4,13 +4,26 @@ run_preformat_check() {
   local clean=true
 
   step "Checking DEP activation record..."
-  if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
-    local org
-    org=$(plutil -convert xml1 -o - "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null \
+  local dep_file="/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound"
+  if [ -f "$dep_file" ]; then
+    local org=""
+    org=$(plutil -convert xml1 -o - "$dep_file" 2>/dev/null \
       | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
-    echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
-    [ -n "$org" ] && echo -e "  ${YEL}Device assigned to: $org${NC}"
-    clean=false
+    local is_fetch_err="false"
+    if plutil -p "$dep_file" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+      is_fetch_err="true"
+    fi
+
+    if [ -n "$org" ]; then
+      echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
+      echo -e "  ${YEL}Device assigned to: $org${NC}"
+      clean=false
+    elif [ "$is_fetch_err" = "true" ]; then
+      echo -e "  ${GRN}DEP cloud check blocked (CloudConfigFetchError recorded — domain block active)${NC}"
+    else
+      echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
+      clean=false
+    fi
   else
     echo -e "  ${GRN}DEP record clean${NC}"
   fi
@@ -33,7 +46,7 @@ run_preformat_check() {
   if command -v profiles &>/dev/null; then
     local enroll_state
     enroll_state=$(sudo profiles status -type enrollment 2>/dev/null || true)
-    if echo "$enroll_state" | grep -qi "enrolled"; then
+    if echo "$enroll_state" | grep -qiE "(Enrolled via DEP|MDM enrollment):[[:space:]]*Yes"; then
       echo -e "  ${RED}Device is enrolled in MDM${NC}"
       clean=false
     else
@@ -58,10 +71,13 @@ run_preformat_check() {
 
   step "Checking pf firewall status..."
   if command -v pfctl &>/dev/null; then
-    if pfctl -a "com.unleash/mdm" -s rules 2>/dev/null | grep -q "block"; then
+    local fw_rules=""
+    fw_rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
+    fw_rules="${fw_rules}$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)"
+    if echo "$fw_rules" | grep -q "block"; then
       echo -e "  ${GRN}Unleash pf firewall active${NC}"
     else
-      echo -e "  ${YEL}No Unleash pf firewall rules${NC}"
+      echo -e "  ${YEL}No Unleash pf firewall rules active${NC}"
     fi
   else
     echo -e "  ${YEL}pfctl not available${NC}"
@@ -104,7 +120,12 @@ check_upgrade_safety() {
     issues=$((issues + 1))
   fi
 
-  if command -v pfctl &>/dev/null && pfctl -a "com.unleash/mdm" -s rules 2>/dev/null | grep -q "block"; then
+  local fw_rules=""
+  if command -v pfctl &>/dev/null; then
+    fw_rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
+    fw_rules="${fw_rules}$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)"
+  fi
+  if echo "$fw_rules" | grep -q "block"; then
     echo -e "  ${GRN}pf firewall active — survives upgrade${NC}"
   else
     echo -e "  ${YEL}No pf firewall — upgrade may restore MDM connectivity${NC}"

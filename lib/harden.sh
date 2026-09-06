@@ -5,22 +5,29 @@ harden_live_os() {
 		"com.apple.ManagedClient"
 		"com.apple.ManagedClient.enroll"
 		"com.apple.ManagedClient.cloudConfiguration"
+		"com.apple.ManagedClientAgent"
+		"com.apple.ManagedClientAgent.agent"
 		"com.apple.mdmclient"
 		"com.apple.mdmclient.daemon"
 		"com.apple.mdmclient.daemon.runatboot"
-		"com.apple.mobileactivationd"
-		"com.apple.activationd"
+		"com.apple.mdmclient.agent"
 	)
 
 	if command -v launchctl &>/dev/null; then
+		local console_uid
+		console_uid=$(stat -f "%u" /dev/console 2>/dev/null || echo "501")
 		for svc in "${mdm_services[@]}"; do
 			sudo launchctl bootout "system/$svc" 2>/dev/null || true
 			sudo launchctl kill SIGKILL "system/$svc" 2>/dev/null || true
 			sudo launchctl disable "system/$svc" 2>/dev/null || true
+
+			sudo launchctl bootout "gui/$console_uid/$svc" 2>/dev/null || true
+			sudo launchctl kill SIGKILL "gui/$console_uid/$svc" 2>/dev/null || true
+			sudo launchctl disable "gui/$console_uid/$svc" 2>/dev/null || true
 		done
 	fi
 
-	for p in ManagedClient mdmclient mobileactivationd activationd; do
+	for p in ManagedClient mdmclient; do
 		if pgrep -fi "$p" >/dev/null 2>&1; then
 			sudo pkill -9 -fi "$p" 2>/dev/null || true
 			if pgrep -fi "$p" >/dev/null 2>&1; then
@@ -35,7 +42,7 @@ harden_live_os() {
 
 	step "Resetting DEP cloud configuration markers..."
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
-	if [ -d "$cfg" ] || [ -f "$cfg/.cloudConfigRecordFound" ]; then
+	if [ -d "$cfg" ]; then
 		sudo rm -f "$cfg/.cloudConfigHasActivationRecord" \
 		      "$cfg/.cloudConfigRecordFound" \
 		      "$cfg/.cloudConfigTimerCheck" \
@@ -43,7 +50,12 @@ harden_live_os() {
 		      "$cfg/com.apple.mdm.depnag.plist" \
 		      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
 		sudo touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
-		success "DEP cached records cleared; bypass markers set"
+		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+			info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
+			info "To delete the on-disk file record, boot into Recovery and run: ./unleash bypass"
+		else
+			success "DEP cached records cleared; bypass markers set"
+		fi
 	else
 		info "No DEP configuration markers found"
 	fi
@@ -57,9 +69,15 @@ harden_live_os() {
 			printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' | sudo tee "$ldp" >/dev/null 2>&1 || true
 		fi
 		for label in \
+			com.apple.ManagedClient \
 			com.apple.ManagedClient.enroll \
 			com.apple.ManagedClient.cloudConfiguration \
+			com.apple.ManagedClientAgent \
+			com.apple.ManagedClientAgent.agent \
+			com.apple.mdmclient \
+			com.apple.mdmclient.daemon \
 			com.apple.mdmclient.daemon.runatboot \
+			com.apple.mdmclient.agent \
 			com.apple.activationd; do
 			sudo "$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
 				|| sudo "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
@@ -133,6 +151,14 @@ harden_live_os() {
 			|| info "Private Relay not configurable (expected on some configs)"
 	fi
 
+	step "Ensuring packet filter (pf) firewall is active..."
+	if [ -f "/etc/pf.conf" ] && grep -q "com.unleash" "/etc/pf.conf" 2>/dev/null; then
+		if command -v pfctl &>/dev/null; then
+			sudo pfctl -e -f /etc/pf.conf 2>/dev/null && success "PF firewall re-loaded and active" \
+				|| info "PF status unchanged"
+		fi
+	fi
+
 	echo ""
 	echo -e "${GRN}============================================${NC}"
 	echo -e "${GRN}      Live-OS Hardening Complete             ${NC}"
@@ -151,8 +177,8 @@ harden_status() {
 	fi
 
 	step "MDM-related LaunchDaemons loaded..."
-	launchctl list 2>/dev/null | grep -iE "mdm|managed|enrollment|activation" || info "None loaded"
+	launchctl list 2>/dev/null | grep -iE "mdm|managedclient" || info "None loaded"
 
 	step "Running MDM processes..."
-	ps aux 2>/dev/null | grep -iE "mdm|managedclient|activation" | grep -v grep || info "None running"
+	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || info "None running"
 }

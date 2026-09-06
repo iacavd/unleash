@@ -155,7 +155,7 @@ deep_status() {
 
 	step "Running MDM Processes"
 	local procs
-	procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep || true)
+	procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || true)
 	if [ -n "$procs" ]; then
 		echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
 	else
@@ -185,9 +185,18 @@ deep_status() {
 	cur_pc=$(echo "$cur_pc" | head -n 1 | tr -dc '0-9')
 	cur_pc="${cur_pc:-0}"
 	[ "$cur_pc" -gt 0 ] && risk="MEDIUM"
-	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd)" | grep -qv grep && risk="HIGH"
+	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -qv grep && risk="HIGH"
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
-	[ -f "$cfg/.cloudConfigRecordFound" ] && risk="CRITICAL"
+	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+		local org=""
+		org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
+			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+		if [ -n "$org" ]; then
+			risk="CRITICAL"
+		elif ! plutil -p "$cfg/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+			risk="CRITICAL"
+		fi
+	fi
 
 	case "$risk" in
 		LOW)
@@ -246,14 +255,21 @@ deep_status_json() {
 	json="${json}  \"mdm_certificates\": $mdm_certs,\n"
 
 	local running_procs=0
-	running_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|/mobileactivationd|/activationd|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+	running_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
 	running_procs="${running_procs:-0}"
 	json="${json}  \"running_mdm_processes\": $running_procs,\n"
 
 	local risk="LOW"
 	[ "$profile_count" -gt 0 ] && risk="MEDIUM"
 	[ "$running_procs" -gt 0 ] && risk="HIGH"
-	[ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ] && risk="CRITICAL"
+	if [ -f "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" ]; then
+		local org=""
+		org=$(plutil -convert xml1 -o - "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null \
+			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+		if [ -n "$org" ] || ! plutil -p "/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+			risk="CRITICAL"
+		fi
+	fi
 	json="${json}  \"risk_score\": \"${risk}\"\n"
 
 	json="${json}}"

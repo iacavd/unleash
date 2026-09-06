@@ -107,8 +107,13 @@ monitor_mdm() {
     local reason=""
 
     if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-      state="dirty"
-      reason="DEP record found"
+      local org=""
+      org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
+        | grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+      if [ -n "$org" ] || ! plutil -p "$cfg/.cloudConfigRecordFound" 2>/dev/null | grep -q "CloudConfigFetchError"; then
+        state="dirty"
+        reason="DEP record found"
+      fi
     fi
 
     if [ -f "$hosts" ] && ! grep -q "iprofiles.apple.com" "$hosts" 2>/dev/null; then
@@ -119,7 +124,7 @@ monitor_mdm() {
     if command -v profiles &>/dev/null; then
       local enroll_state
       enroll_state=$(profiles status -type enrollment 2>/dev/null || true)
-      if echo "$enroll_state" | grep -qi "Enrolled via DEP"; then
+      if echo "$enroll_state" | grep -qiE "(Enrolled via DEP|MDM enrollment):[[:space:]]*Yes"; then
         state="dirty"
         reason="DEP enrollment active"
       fi
