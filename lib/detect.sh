@@ -1,9 +1,28 @@
+# shellcheck shell=bash
+
+# Recovery: DATA_ROOT="$data_mount". Live OS: empty so "${DATA_ROOT}/Library" == "/Library".
+# Set DATA_ROOT in the caller after resolve_data_volume — command substitution is a subshell.
+DATA_ROOT="${DATA_ROOT-}"
+
+unleash_root() { echo "${DATA_ROOT}/Library/Unleash"; }
+
+_detect_du() { "${DISKUTIL:-diskutil}" "$@"; }
+_detect_pb() {
+	if [ -n "${PLISTBUDDY:-}" ]; then
+		"$PLISTBUDDY" "$@"
+	elif [ -x /usr/libexec/PlistBuddy ]; then
+		/usr/libexec/PlistBuddy "$@"
+	else
+		command PlistBuddy "$@"
+	fi
+}
+_detect_mn() { "${MOUNT:-mount}" "$@"; }
 
 is_recovery() {
 	[ -d "/System/Installation" ] && return 0
 
 	local vol
-	vol=$(diskutil info / 2>/dev/null | awk -F': *' '/Volume Name/{print $2}' | xargs)
+	vol=$(_detect_du info / 2>/dev/null | awk -F': *' '/Volume Name/{print $2}' | xargs)
 	case "$vol" in
 		"Recovery"*|"macOS Base"*|"macOS Installer"*) return 0 ;;
 	esac
@@ -20,7 +39,7 @@ detect_boot_mode() {
 		return 0
 	fi
 	local vol
-	vol=$(diskutil info / 2>/dev/null | awk -F': *' '/Volume Name/{print $2}' | xargs 2>/dev/null || true)
+	vol=$(_detect_du info / 2>/dev/null | awk -F': *' '/Volume Name/{print $2}' | xargs 2>/dev/null || true)
 	case "$vol" in
 		"Recovery"*|"macOS Base"*) echo "recovery"; return 0 ;;
 		"macOS Installer"*) echo "installer"; return 0 ;;
@@ -40,78 +59,275 @@ detect_macos_major() {
 	echo "${ver%%.*}"
 }
 
-resolve_data_volume() {
-	step "Locating Data volume by APFS role..."
+# Trim leading/trailing whitespace. bash 3.2, no namerefs.
+_detect_trim() {
+	local s="${1-}"
+	s="${s#"${s%%[![:space:]]*}"}"
+	s="${s%"${s##*[![:space:]]}"}"
+	printf '%s' "$s"
+}
 
-	local id mount_pt
-
-	# 1. Try APFS Role matching
-	id=$(diskutil apfs list 2>/dev/null \
-		| awk '/(Data)/ && match($0, /disk[0-9]+s[0-9]+/) {print substr($0, RSTART, RLENGTH); exit}')
-
-	# 2. Try Name-based diskutil list matching if APFS role lookup failed
-	if [ -z "$id" ] || ! diskutil info "/dev/$id" >/dev/null 2>&1; then
-		info "APFS role detection failed — trying name-based..."
-		id=$(diskutil list 2>/dev/null \
-			| awk '/[[:space:]]Data[[:space:]]/{for(i=1;i<=NF;i++) if($i ~ /^disk[0-9]+s[0-9]+$/) v=$i} END{print v}')
+_detect_list_data_devs_text() {
+	local ids
+	ids=$(_detect_du apfs list 2>/dev/null | awk '
+		/APFS Volume Disk \(Role\):/ && /\(Data\)/ {
+			if (match($0, /disk[0-9]+s[0-9]+/)) print substr($0, RSTART, RLENGTH)
+		}
+	')
+	if [ -z "$ids" ]; then
+		ids=$(_detect_du list 2>/dev/null | awk '
+			/[[:space:]]Data[[:space:]]/ {
+				for (i = 1; i <= NF; i++) if ($i ~ /^disk[0-9]+s[0-9]+$/) print $i
+			}
+		')
 	fi
+	printf '%s\n' "$ids" | sed '/^$/d'
+}
 
-	# 3. Direct /Volumes directory scan (ignoring USB/Installer drives)
-	if [ -z "$id" ]; then
-		info "Diskutil lookup inconclusive — scanning mounted volumes in /Volumes..."
-		for v in /Volumes/*; do
-			[ -d "$v" ] || continue
-			case "$(basename "$v")" in
-				"Recovery"*|"macOS Base"*|"macOS Installer"*|"Shared"*|"Preboot"*|"VM"*) continue ;;
-			esac
-			if [ -d "$v/private/var/db/dslocal/nodes/Default" ]; then
-				success "Discovered Data volume via directory scan: $v"
-				echo "$v"
-				return 0
-			fi
+# Print one device identifier per Data-role volume. Plist first, text awk fallback.
+_detect_list_data_devs() {
+	local plist i j ridx role dev got
+	plist=$(mktemp) || return 1
+	got=0
+	if _detect_du apfs list -plist >"$plist" 2>/dev/null; then
+		i=0
+		while _detect_pb -c "Print :Containers:$i" "$plist" >/dev/null 2>&1; do
+			j=0
+			while _detect_pb -c "Print :Containers:$i:Volumes:$j:DeviceIdentifier" "$plist" >/dev/null 2>&1; do
+				ridx=0
+				while role=$(_detect_pb -c "Print :Containers:$i:Volumes:$j:Roles:$ridx" "$plist" 2>/dev/null); do
+					if [ "$role" = "Data" ]; then
+						dev=$(_detect_pb -c "Print :Containers:$i:Volumes:$j:DeviceIdentifier" "$plist" 2>/dev/null) || dev=""
+						if [ -n "$dev" ]; then
+							printf '%s\n' "$dev"
+							got=1
+						fi
+						break
+					fi
+					ridx=$((ridx + 1))
+				done
+				j=$((j + 1))
+			done
+			i=$((i + 1))
 		done
 	fi
+	rm -f "$plist"
+	if [ "$got" -eq 0 ]; then
+		_detect_list_data_devs_text
+	fi
+}
 
-	if [ -z "$id" ] || ! diskutil info "/dev/$id" >/dev/null 2>&1; then
-		warn "Auto-detection failed. Available disks:"
-		diskutil list >&2
-		echo ""
-		read -p "Enter Data volume identifier (e.g. disk3s1): " id </dev/tty
-		id="${id#/dev/}"
+_detect_mount_point() {
+	local dev="$1" mp
+	mp=$(_detect_du info "$dev" 2>/dev/null \
+		| awk -F': *' '/^[[:space:]]*Mount Point:/{print $2; exit}')
+	mp="$(_detect_trim "${mp:-}")"
+	case "$mp" in
+		""|"Not Mounted") return 1 ;;
+	esac
+	[ -d "$mp" ] || return 1
+	printf '%s\n' "$mp"
+}
+
+_detect_is_locked() {
+	local info
+	info=$(_detect_du info "$1" 2>/dev/null || true)
+	printf '%s\n' "$info" | grep -qiE 'Locked:[[:space:]]*Yes' && return 0
+	printf '%s\n' "$info" | grep -qiE 'FileVault:[[:space:]]*Yes[[:space:]]*\(Locked\)' && return 0
+	return 1
+}
+
+# Never put the passphrase on argv.
+_detect_unlock() {
+	local dev="$1"
+	if [ -n "${UNLEASH_FV_PASSWORD_FILE:-}" ]; then
+		if [ ! -f "$UNLEASH_FV_PASSWORD_FILE" ]; then
+			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault password file not found"
+			return 1
+		fi
+		chmod 600 "$UNLEASH_FV_PASSWORD_FILE" 2>/dev/null || true
+		if ! _detect_du apfs unlockVolume "$dev" -stdinpassphrase < "$UNLEASH_FV_PASSWORD_FILE"; then
+			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
+			return 1
+		fi
+		return 0
+	fi
+	if [ -n "${UNLEASH_FV_KEY_FILE:-}" ]; then
+		if [ ! -f "$UNLEASH_FV_KEY_FILE" ]; then
+			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault recovery key file not found"
+			return 1
+		fi
+		chmod 600 "$UNLEASH_FV_KEY_FILE" 2>/dev/null || true
+		if ! _detect_du apfs unlockVolume "$dev" -recoverykeyfile "$UNLEASH_FV_KEY_FILE"; then
+			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
+			return 1
+		fi
+		return 0
+	fi
+	if [ -t 0 ] && [ "${UNLEASH_UNATTENDED:-0}" = 0 ]; then
+		info detect unlock "FileVault locked — enter password or recovery key"
+		if ! _detect_du apfs unlockVolume "$dev"; then
+			result_fail E_FV_UNLOCK_FAILED detect unlock "FileVault unlock failed"
+			return 1
+		fi
+		return 0
+	fi
+	result_fail E_FV_LOCKED detect unlock "FileVault locked and no secret"
+	return 1
+}
+
+# Sets _DETECT_MOUNT. Must not run in a command-substitution subshell (result_fail).
+_detect_ensure_mounted() {
+	local dev="$1" mp mount_rc
+	_DETECT_MOUNT=""
+
+	mp=$(_detect_mount_point "$dev") || mp=""
+	if [ -z "$mp" ]; then
+		mount_rc=0
+		_detect_du mount "$dev" >/dev/null || mount_rc=$?
+		if [ "$mount_rc" -ne 0 ]; then
+			if _detect_is_locked "$dev"; then
+				_detect_unlock "$dev" || return 1
+				mp=$(_detect_mount_point "$dev") || mp=""
+				if [ -z "$mp" ]; then
+					if ! _detect_du mount "$dev" >/dev/null; then
+						result_fail E_VOLUME_NOT_FOUND detect mount "diskutil mount failed"
+						return 1
+					fi
+					mp=$(_detect_mount_point "$dev") || mp=""
+				fi
+			else
+				result_fail E_VOLUME_NOT_FOUND detect mount "diskutil mount failed"
+				return 1
+			fi
+		else
+			mp=$(_detect_mount_point "$dev") || mp=""
+		fi
 	fi
 
-	[ -n "$id" ] || error_exit "No Data volume identifier provided."
-	local data_dev="/dev/$id"
-	diskutil info "$data_dev" >/dev/null 2>&1 || error_exit "Not a valid disk: $data_dev"
-	info "Data volume device: $data_dev"
+	if [ -z "$mp" ] || [ ! -d "$mp" ]; then
+		result_fail E_VOLUME_NOT_FOUND detect mount "diskutil mount failed"
+		return 1
+	fi
+	_DETECT_MOUNT="$mp"
+	return 0
+}
 
-	_mount_point() {
-		diskutil info "$data_dev" 2>/dev/null \
-			| awk -F': *' '/Mount Point/{print $2}' | sed 's/[[:space:]]*$//'
-	}
+_detect_ensure_writable() {
+	local mount="$1"
+	mkdir -p "$mount/Library/Unleash/state" || true
+	if ! touch "$mount/Library/Unleash/state/.write-test" 2>/tmp/unleash-touch.err; then
+		_detect_mn -uw "$mount" || true
+		if ! touch "$mount/Library/Unleash/state/.write-test" 2>/dev/null; then
+			result_fail E_VOLUME_RO detect remount "Data volume is read-only after mount -uw"
+			return 1
+		fi
+	fi
+	rm -f "$mount/Library/Unleash/state/.write-test"
+	return 0
+}
 
-	mount_pt=$(_mount_point)
+_detect_dump_candidates() {
+	local dev mp name
+	for dev in "$@"; do
+		[ -n "$dev" ] || continue
+		mp=$(_detect_mount_point "$dev") || mp="(unmounted)"
+		name=$(_detect_du info "$dev" 2>/dev/null \
+			| awk -F': *' '/Volume Name/{print $2; exit}')
+		name="$(_detect_trim "${name:-}")"
+		info detect resolve "$dev ${name:+$name }${mp}"
+	done
+}
 
-	if [ -z "$mount_pt" ] || [ ! -d "$mount_pt" ]; then
-		info "Not mounted — mounting..."
-		diskutil mount "$data_dev" 2>/dev/null || true
-		mount_pt=$(_mount_point)
+resolve_data_volume() {
+	step detect resolve "Locating Data volume"
+
+	local devs pick spec count line mp
+	_DETECT_MOUNT=""
+
+	devs=$(_detect_list_data_devs) || devs=""
+	devs=$(printf '%s\n' "$devs" | sed '/^$/d')
+
+	if [ -n "${UNLEASH_VOLUME:-}" ]; then
+		spec="$(_detect_trim "$UNLEASH_VOLUME")"
+		if [ -d "$spec" ]; then
+			pick=$(_detect_du info "$spec" 2>/dev/null \
+				| awk -F': *' '/Device Identifier/{print $2; exit}')
+			pick="$(_detect_trim "${pick:-}")"
+			if [ -z "$pick" ]; then
+				# Path-only override when diskutil info cannot map it.
+				if [ ! -d "$spec/private/var/db/dslocal/nodes/Default" ]; then
+					result_fail E_VOLUME_NOT_FOUND detect resolve "no APFS Data volume"
+					return 1
+				fi
+				_DETECT_MOUNT="$spec"
+				_detect_ensure_writable "$_DETECT_MOUNT" || return 1
+				success detect resolve "Data volume $_DETECT_MOUNT"
+				printf '%s\n' "$_DETECT_MOUNT"
+				return 0
+			fi
+		else
+			pick="${spec#/dev/}"
+			case "$pick" in
+				disk[0-9]*s[0-9]*) ;;
+				*)
+					result_fail E_VOLUME_NOT_FOUND detect resolve "no APFS Data volume"
+					return 1
+					;;
+			esac
+		fi
+	else
+		count=0
+		while IFS= read -r line; do
+			[ -n "$line" ] || continue
+			count=$((count + 1))
+		done <<EOF
+$devs
+EOF
+		if [ "$count" -eq 0 ]; then
+			_detect_du list >&2 || true
+			result_fail E_VOLUME_NOT_FOUND detect resolve "no APFS Data volume"
+			return 1
+		fi
+		if [ "$count" -gt 1 ]; then
+			info detect resolve "multiple Data volumes"
+			while IFS= read -r line; do
+				[ -n "$line" ] || continue
+				_detect_dump_candidates "$line"
+			done <<EOF
+$devs
+EOF
+			if [ -t 0 ] && [ "${UNLEASH_UNATTENDED:-0}" = 0 ]; then
+				printf 'Enter Data volume identifier (e.g. disk3s5): ' >&2
+				IFS= read -r pick || pick=""
+				pick="$(_detect_trim "${pick#/dev/}")"
+				if [ -z "$pick" ]; then
+					result_fail E_VOLUME_AMBIGUOUS detect resolve "multiple Data volumes"
+					return 1
+				fi
+			else
+				result_fail E_VOLUME_AMBIGUOUS detect resolve "multiple Data volumes"
+				return 1
+			fi
+		else
+			pick="$devs"
+			pick="$(_detect_trim "$pick")"
+		fi
 	fi
 
-	if [ -z "$mount_pt" ] || [ ! -d "$mount_pt" ]; then
-		warn "FileVault-locked — need to unlock."
-		echo -e "${YEL}Enter password of a user on this Mac (or FileVault recovery key):${NC}" >&2
-		diskutil apfs unlockVolume "$data_dev" 2>/dev/null \
-			|| error_exit "Failed to unlock. Re-run with valid credentials."
-		mount_pt=$(_mount_point)
+	_detect_ensure_mounted "$pick" || return 1
+	mp="$_DETECT_MOUNT"
+
+	if [ ! -d "$mp/private/var/db/dslocal/nodes/Default" ]; then
+		result_fail E_VOLUME_NOT_FOUND detect resolve "Not a macOS Data volume (no dslocal node)"
+		return 1
 	fi
 
-	[ -d "$mount_pt" ] || error_exit "Mount point not found after mount/unlock."
-	[ -d "$mount_pt/private/var/db/dslocal/nodes/Default" ] \
-		|| error_exit "Not a macOS Data volume (no dslocal node at $mount_pt)."
+	_detect_ensure_writable "$mp" || return 1
 
-	success "Data volume: $mount_pt"
-	echo "$mount_pt"
+	success detect resolve "Data volume $mp"
+	printf '%s\n' "$mp"
+	return 0
 }
 
 resolve_all_volumes() {
@@ -119,12 +335,11 @@ resolve_all_volumes() {
 	# Returns newline-separated list of mount points
 	local ids mount_pt found=0
 
-	ids=$(diskutil apfs list 2>/dev/null \
+	ids=$(_detect_du apfs list 2>/dev/null \
 		| awk '/(Data)/ && match($0, /disk[0-9]+s[0-9]+/) {print substr($0, RSTART, RLENGTH)}')
 
 	if [ -z "$ids" ]; then
-		# Fallback: name-based scan
-		ids=$(diskutil list 2>/dev/null \
+		ids=$(_detect_du list 2>/dev/null \
 			| awk '/[[:space:]]Data[[:space:]]/{for(i=1;i<=NF;i++) if($i ~ /^disk[0-9]+s[0-9]+$/) print $i}')
 	fi
 
@@ -132,14 +347,14 @@ resolve_all_volumes() {
 		local id
 		for id in $ids; do
 			local data_dev="/dev/$id"
-			diskutil info "$data_dev" >/dev/null 2>&1 || continue
+			_detect_du info "$data_dev" >/dev/null 2>&1 || continue
 
-			mount_pt=$(diskutil info "$data_dev" 2>/dev/null \
+			mount_pt=$(_detect_du info "$data_dev" 2>/dev/null \
 				| awk -F': *' '/Mount Point/{print $2}' | sed 's/[[:space:]]*$//')
 
 			if [ -z "$mount_pt" ] || [ ! -d "$mount_pt" ]; then
-				diskutil mount "$data_dev" 2>/dev/null || continue
-				mount_pt=$(diskutil info "$data_dev" 2>/dev/null \
+				_detect_du mount "$data_dev" 2>/dev/null || continue
+				mount_pt=$(_detect_du info "$data_dev" 2>/dev/null \
 					| awk -F': *' '/Mount Point/{print $2}' | sed 's/[[:space:]]*$//')
 			fi
 

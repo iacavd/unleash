@@ -1,6 +1,22 @@
 #!/bin/bash
 set -eEuo pipefail
 
+# Recovery PATH is incomplete; keep system tools first. csrutil/profiles live in /usr/bin on macOS.
+PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+export PATH
+DISKUTIL=/usr/sbin/diskutil
+PLISTBUDDY=/usr/libexec/PlistBuddy
+MOUNT=/sbin/mount
+PFCTL=/sbin/pfctl
+DSCL=/usr/bin/dscl
+PLUTIL=/usr/bin/plutil
+LAUNCHCTL=/bin/launchctl
+FDESETUP=/usr/bin/fdesetup
+DSCACHEUTIL=/usr/bin/dscacheutil
+SHASUM=/usr/bin/shasum
+CSRUTIL=/usr/bin/csrutil
+PROFILES=/usr/bin/profiles
+
 VERSION="2.0.0"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
