@@ -11,12 +11,13 @@ run_doctor() {
   fi
 
   begin "Library files"
-  local missing=0
-  for _lib in colors detect validate dscl suppress backup status heal firewall harden whitelist check monitor history; do
+  local missing=0 total=0
+  for _lib in colors config detect validate dscl suppress backup status heal firewall harden whitelist check monitor history doctor selfupdate uninstall report ma_detect demo vpn init suggest remediate telemetry predict discord automate security webhook simulate tui fleet upgrade web; do
+    total=$((total + 1))
     [ -f "$LIB_DIR/$_lib.sh" ] || missing=$((missing + 1))
   done
   if [ "$missing" -eq 0 ]; then
-    end_ok; echo "     13/13 modules loaded"
+    end_ok; echo "     $total/$total modules loaded"
   else
     end_fail; echo "     $missing module(s) missing"; errors=$((errors + 1))
   fi

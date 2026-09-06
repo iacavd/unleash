@@ -93,6 +93,19 @@ Bypass / suppress / monitor MDM enrollment on macOS.
   Living System:
     harden          Kill MDM processes + remove profiles + flush DNS
     audit           Deep system scan with risk score
+    quarantine      Quarantine MDM mobileconfig payloads
+
+  Security & Defense:
+    apns-block      Block Apple Push Notification endpoints (PF drop)
+    apns-unblock    Unblock Apple Push Notification endpoints
+
+  Fleet & Automation:
+    auto-all        Fully automated deployment (no prompts)
+                    Options: --username X --password X --volume /path
+    fleet-apply     Apply declarative fleet manifest (--manifest file.json)
+    upgrade-os      Safe macOS software update wrapper with auto-heal
+    simulate        Dry-run simulation of planned modifications
+    tui             Interactive terminal UI dashboard
 
   Monitoring:
     check           Pre-format / pre-upgrade safety report
@@ -103,6 +116,9 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     monitor-uninstall Remove monitor LaunchDaemon
     monitor-stop    Stop the daemon
     monitor-status  Check if daemon is running
+    webhook-test    Dispatch test alert (discord/slack/telegram/ntfy/generic)
+    web             Embedded Web UI & Prometheus metrics server (--port 8080)
+    web-stop        Stop embedded Web server
 
   State:
     backup          Save hosts, profiles, launchd state, pf.conf
@@ -110,27 +126,15 @@ Bypass / suppress / monitor MDM enrollment on macOS.
     backup-list     List available backup snapshots
     dualboot        Target an external macOS install
 
-    init            Interactive setup wizard
-    suggest         Risk-based recommendations
-    remediate       Per-org MDM cleanup
-    predict         Look up serial number enrollment
-    telemetry       Manage anonymous usage stats (opt-in)
-
   Diagnostics:
-    doctor          Run pre-flight checks on this environment
-    report          Generate a full markdown status report
-    history         Show event log from monitor/heal runs
-    test            Dry-run mode: simulate without changing anything
+    doctor          Run pre-flight diagnostics & security posture check
+    report          Generate a full status report (markdown or --json)
     demo            Run simulated bypass flow (no real changes)
 
   VPN:
     vpn-kill        Install VPN kill-switch (prevents MDM leaks outside VPN)
     vpn-kill-remove Remove VPN kill-switch
     vpn-kill-status Check VPN kill-switch status
-
-  Automation:
-    auto-all        Fully automated deployment (no prompts)
-                    Options: --username X --password X --volume /path
 
   Management:
     config          View/edit persistent settings (~/.unleash.conf)

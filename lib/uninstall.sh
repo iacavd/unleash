@@ -27,21 +27,26 @@ do_uninstall() {
   fi
 
   begin "Cleaning pf anchors"
-  local anchors=("/etc/pf.anchors/com.unleash/mdm" "/etc/pf.anchors/com.unleash.selective" "/etc/pf.anchors/com.unleash/vpn-kill")
+  local anchors=("/etc/pf.anchors/com.unleash/mdm" "/etc/pf.anchors/com.unleash.selective" "/etc/pf.anchors/com.unleash/vpn-kill" "/etc/pf.anchors/com.unleash.apns")
   for a in "${anchors[@]}"; do
     [ -f "$a" ] && rm -f "$a"
   done
   # Clean the com.unleash directory if empty
   [ -d "/etc/pf.anchors/com.unleash" ] && rmdir "/etc/pf.anchors/com.unleash" 2>/dev/null || true
-  for anchor_name in "com.unleash/mdm" "com.unleash.selective" "com.unleash/vpn-kill"; do
+  for anchor_name in "com.unleash/mdm" "com.unleash.selective" "com.unleash/vpn-kill" "com.unleash.apns"; do
     pfctl -a "$anchor_name" -F all 2>/dev/null || true
   done
   local pf_conf="/etc/pf.conf"
   if [ -f "$pf_conf" ]; then
     sed -i '' '/# Added by unleash/d' "$pf_conf" 2>/dev/null || true
+    sed -i '' '/# UNLEASH_/d' "$pf_conf" 2>/dev/null || true
     sed -i '' '/com\.unleash/d' "$pf_conf" 2>/dev/null || true
   fi
   pfctl -f /etc/pf.conf 2>/dev/null || true
+  end_ok
+
+  begin "Removing post-update hooks"
+  [ -f "/private/etc/rc.unleash-update.local" ] && rm -f "/private/etc/rc.unleash-update.local"
   end_ok
 
   begin "Cleaning hosts entries"
