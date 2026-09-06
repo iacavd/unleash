@@ -12,49 +12,74 @@ heal_suppress() {
 
 	local needs_heal=false
 
-	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-		warn "DEP activation record present"
+	# 1. DEP Activation Record Check
+	if [ -f "$cfg/.cloudConfigRecordFound" ] || [ -f "$cfg/.cloudConfigHasActivationRecord" ]; then
+		local org="" mdm_host=""
+		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
+			org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
+				| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+			mdm_host=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
+				| grep -ioE 'https?://[a-z0-9._-]+' | sed -E 's#https?://##' \
+				| sort -u | grep -viE '(^|\.)apple\.com$' | head -1 || true)
+		fi
+		warn "DEP activation record found at $cfg"
+		[ -n "$org" ] && warn "  Organization: $org"
+		[ -n "$mdm_host" ] && warn "  MDM Server:   $mdm_host"
 		needs_heal=true
 	else
-		info "DEP markers clean"
+		info "DEP activation record markers are clean"
 	fi
 
+	# 2. Hosts Block Check
 	if [ -f "$hosts" ]; then
 		if grep -q "iprofiles.apple.com" "$hosts" 2>/dev/null; then
-			info "Domain block active"
+			info "Domain block active in $hosts"
 		else
-			warn "Domain block missing"
+			warn "Domain block missing in $hosts (Apple MDM servers not redirected to 0.0.0.0)"
 			needs_heal=true
 		fi
 	else
-		warn "Hosts file missing"
+		warn "Hosts file missing ($hosts)"
 		needs_heal=true
 	fi
 
+	# 3. LaunchDaemons Disabled Overrides Check
+	local all_daemons=(
+		"com.apple.ManagedClient.enroll"
+		"com.apple.ManagedClient.cloudConfiguration"
+		"com.apple.mdmclient.daemon.runatboot"
+		"com.apple.activationd"
+	)
 	if [ -f "$ldp" ]; then
-		local missing=0
-		for label in com.apple.ManagedClient.enroll com.apple.mdmclient.daemon.runatboot; do
-			$PB -c "Print :$label" "$ldp" 2>/dev/null | grep -q "true" || missing=$((missing + 1))
+		local missing_daemons=()
+		for label in "${all_daemons[@]}"; do
+			if ! $PB -c "Print :$label" "$ldp" 2>/dev/null | grep -q "true"; then
+				missing_daemons+=("$label")
+			fi
 		done
-		if [ "$missing" -gt 0 ]; then
-			warn "$missing enrollment daemon(s) not disabled"
+		if [ "${#missing_daemons[@]}" -gt 0 ]; then
+			warn "${#missing_daemons[@]} enrollment daemon(s) not disabled in $ldp:"
+			for d in "${missing_daemons[@]}"; do
+				warn "  - $d (enabled)"
+			done
 			needs_heal=true
 		else
-			info "Enrollment daemons disabled"
+			info "All 4 enrollment daemons disabled"
 		fi
 	else
-		warn "Launchd override missing"
+		warn "Launchd disabled overrides plist missing ($ldp)"
 		needs_heal=true
 	fi
 
 	if [ "$needs_heal" = false ]; then
-		success "MDM suppression intact — no action needed"
+		success "MDM suppression intact — no action needed."
 		return 0
 	fi
 
-	step "Re-applying MDM suppression..."
+	echo ""
+	info "Applying remediation to restore MDM suppression..."
 	suppress_enrollment "$data_mount"
-	success "MDM suppression restored"
+	success "MDM suppression restored successfully."
 }
 
 _persist_mount_root() {
