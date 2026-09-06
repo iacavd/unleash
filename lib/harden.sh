@@ -1,44 +1,18 @@
 
 harden_live_os() {
-	step "Killing running MDM processes..."
-	local mdm_services=(
-		"com.apple.ManagedClient"
-		"com.apple.ManagedClient.enroll"
-		"com.apple.ManagedClient.cloudConfiguration"
-		"com.apple.ManagedClientAgent"
-		"com.apple.ManagedClientAgent.agent"
-		"com.apple.mdmclient"
-		"com.apple.mdmclient.daemon"
-		"com.apple.mdmclient.daemon.runatboot"
-		"com.apple.mdmclient.agent"
-	)
-
-	if command -v launchctl &>/dev/null; then
-		local console_uid
-		console_uid=$(stat -f "%u" /dev/console 2>/dev/null || echo "501")
-		for svc in "${mdm_services[@]}"; do
-			sudo launchctl bootout "system/$svc" 2>/dev/null || true
-			sudo launchctl kill SIGKILL "system/$svc" 2>/dev/null || true
-			sudo launchctl disable "system/$svc" 2>/dev/null || true
-
-			sudo launchctl bootout "gui/$console_uid/$svc" 2>/dev/null || true
-			sudo launchctl kill SIGKILL "gui/$console_uid/$svc" 2>/dev/null || true
-			sudo launchctl disable "gui/$console_uid/$svc" 2>/dev/null || true
-		done
-	fi
-
-	for p in ManagedClient mdmclient; do
-		if pgrep -fi "$p" >/dev/null 2>&1; then
-			sudo pkill -9 -fi "$p" 2>/dev/null || true
-			if pgrep -fi "$p" >/dev/null 2>&1; then
-				warn "Process $p still running after kill"
-			else
-				success "Killed $p"
-			fi
+	step "Removing residual MDM profiles..."
+	if command -v profiles &>/dev/null; then
+		local installed
+		installed=$(profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
+		if [ "$installed" -gt 0 ]; then
+			sudo profiles -D -F 2>/dev/null && success "Forced profile removal" \
+				|| warn "Profile removal failed"
 		else
-			info "$p not running"
+			info "No installed profiles to remove"
 		fi
-	done
+	else
+		warn "profiles command not available"
+	fi
 
 	step "Resetting DEP cloud configuration markers..."
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
@@ -52,7 +26,7 @@ harden_live_os() {
 		sudo touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
 		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
 			info "Active System Integrity Protection (SIP) protects .cloudConfigRecordFound from live deletion."
-			info "To delete the on-disk file record, boot into Recovery and run: ./unleash bypass"
+			info "To delete the on-disk file record, boot into Recovery and run: ./unleash recovery"
 		else
 			success "DEP cached records cleared; bypass markers set"
 		fi
@@ -83,20 +57,6 @@ harden_live_os() {
 				|| sudo "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
 		done
 		success "Enrollment daemons disabled in launchd overrides"
-	fi
-
-	step "Removing residual MDM profiles..."
-	if command -v profiles &>/dev/null; then
-		local installed
-		installed=$(profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
-		if [ "$installed" -gt 0 ]; then
-			sudo profiles -D -F 2>/dev/null && success "Forced profile removal" \
-				|| warn "Profile removal failed"
-		else
-			info "No installed profiles to remove"
-		fi
-	else
-		warn "profiles command not available"
 	fi
 
 	step "Cleaning user LaunchAgents..."
@@ -157,6 +117,49 @@ harden_live_os() {
 			sudo pfctl -e -f /etc/pf.conf 2>/dev/null && success "PF firewall re-loaded and active" \
 				|| info "PF status unchanged"
 		fi
+	fi
+
+	step "Terminating MDM daemons and processes..."
+	local mdm_services=(
+		"com.apple.ManagedClient"
+		"com.apple.ManagedClient.enroll"
+		"com.apple.ManagedClient.cloudConfiguration"
+		"com.apple.ManagedClientAgent"
+		"com.apple.ManagedClientAgent.agent"
+		"com.apple.mdmclient"
+		"com.apple.mdmclient.daemon"
+		"com.apple.mdmclient.daemon.runatboot"
+		"com.apple.mdmclient.agent"
+	)
+
+	if command -v launchctl &>/dev/null; then
+		local console_uid
+		console_uid=$(stat -f "%u" /dev/console 2>/dev/null || echo "501")
+		for svc in "${mdm_services[@]}"; do
+			sudo launchctl bootout "system/$svc" 2>/dev/null || true
+			sudo launchctl kill SIGKILL "system/$svc" 2>/dev/null || true
+			sudo launchctl disable "system/$svc" 2>/dev/null || true
+
+			sudo launchctl bootout "gui/$console_uid/$svc" 2>/dev/null || true
+			sudo launchctl kill SIGKILL "gui/$console_uid/$svc" 2>/dev/null || true
+			sudo launchctl disable "gui/$console_uid/$svc" 2>/dev/null || true
+		done
+	fi
+
+	for p in ManagedClient mdmclient; do
+		if pgrep -fi "$p" >/dev/null 2>&1; then
+			sudo pkill -9 -fi "$p" 2>/dev/null || true
+		fi
+	done
+	sleep 0.2
+	if pgrep -fi "ManagedClient|mdmclient" >/dev/null 2>&1; then
+		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
+		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
+	fi
+	if pgrep -fi "ManagedClient|mdmclient" >/dev/null 2>&1; then
+		warn "Some MDM processes still running"
+	else
+		success "All MDM daemons terminated"
 	fi
 
 	echo ""

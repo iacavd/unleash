@@ -35,8 +35,16 @@ generate_report_brief() {
     pc=$(echo "$pc" | head -n 1 | tr -dc '0-9')
     pc="${pc:-0}"
     [ "$pc" -gt 0 ] && { risk="MEDIUM"; issues=$((issues + 1)); }
+    sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
+    sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
   fi
-  ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
+  local third_party
+  third_party=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep || true)
+  if [ -n "$third_party" ]; then
+    risk="HIGH"; issues=$((issues + 1))
+  elif [ "${pc:-0}" -gt 0 ]; then
+    ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -qv grep && { risk="HIGH"; issues=$((issues + 1)); }
+  fi
 
   local persist="no"
   [ -f "/Library/LaunchDaemons/com.unleash.heal.plist" ] && persist="yes"
@@ -186,11 +194,24 @@ generate_report_full() {
   echo ""
 
   echo -e "${CYAN}─── Running MDM Processes ──────────────────────────────────${NC}"
-  local procs
+  local procs third_party
   procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || true)
+  third_party=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep || true)
+  if [ -n "$third_party" ]; then
+    echo -e "  ${RED}Third-party MDM agent active:${NC}"
+    echo "$third_party" | awk '{print "    " $11 " (PID " $2 ")"}'
+  fi
   if [ -n "$procs" ]; then
-    echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
-  else
+    local enroll_st
+    enroll_st=$(sudo profiles status -type enrollment 2>/dev/null || true)
+    if echo "$enroll_st" | grep -qiE "Enrolled via DEP:[[:space:]]*No" && echo "$enroll_st" | grep -qiE "MDM enrollment:[[:space:]]*No"; then
+      echo -e "  ${GRN}Apple system query helper (idle, not enrolled in MDM):${NC}"
+      echo "$procs" | awk '{print "    " $11 " (PID " $2 ")"}'
+    else
+      echo -e "  ${RED}Active MDM process(es):${NC}"
+      echo "$procs" | awk '{print "    " $11 " (PID " $2 ")"}'
+    fi
+  elif [ -z "$third_party" ]; then
     echo -e "  ${GRN}None${NC}"
   fi
   echo ""

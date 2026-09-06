@@ -87,8 +87,8 @@ deep_status() {
 	header "Deep MDM Audit"
 
 	step "Installed Configuration Profiles"
+	local profile_count=0
 	if command -v profiles &>/dev/null; then
-		local profile_count
 		profile_count=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
 		profile_count="${profile_count:-0}"
 		profile_count=$(echo "$profile_count" | head -n 1 | tr -dc '0-9')
@@ -105,8 +105,14 @@ deep_status() {
 	echo ""
 
 	step "MDM Enrollment State"
+	local enroll_raw=""
 	if command -v profiles &>/dev/null; then
-		sudo profiles status -type enrollment 2>/dev/null || echo "  Cannot determine"
+		enroll_raw=$(sudo profiles status -type enrollment 2>/dev/null || echo "  Cannot determine")
+		echo "$enroll_raw"
+		# Terminate transient query processes spawned by profiles query so they don't linger
+		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
+		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
+		sleep 0.2
 	fi
 	echo ""
 
@@ -154,11 +160,22 @@ deep_status() {
 	echo ""
 
 	step "Running MDM Processes"
-	local procs
+	local procs third_party
 	procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep || true)
+	third_party=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep || true)
+	if [ -n "$third_party" ]; then
+		warn "Active third-party MDM agent running:"
+		echo "$third_party" | awk '{print "  " $11 " (PID " $2 ")"}'
+	fi
 	if [ -n "$procs" ]; then
-		echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
-	else
+		if echo "$enroll_raw" | grep -qiE "Enrolled via DEP:[[:space:]]*No" && echo "$enroll_raw" | grep -qiE "MDM enrollment:[[:space:]]*No" && [ "$profile_count" -eq 0 ]; then
+			info "Apple system helper active in memory (transient query handler — not enrolled in MDM)"
+			echo "$procs" | awk '{print "  " $11 " (PID " $2 ") [idle helper]"}'
+		else
+			warn "Active MDM process(es) running:"
+			echo "$procs" | awk '{print "  " $11 " (PID " $2 ")"}'
+		fi
+	elif [ -z "$third_party" ]; then
 		info "No MDM processes running"
 	fi
 	echo ""
@@ -179,13 +196,18 @@ deep_status() {
 
 	step "Overall Assessment"
 	local risk="LOW"
-	local cur_pc
-	cur_pc=$(sudo profiles -C -output=xml 2>/dev/null | grep -c "ProfileDisplayName" || true)
-	cur_pc="${cur_pc:-0}"
-	cur_pc=$(echo "$cur_pc" | head -n 1 | tr -dc '0-9')
-	cur_pc="${cur_pc:-0}"
-	[ "$cur_pc" -gt 0 ] && risk="MEDIUM"
-	ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -qv grep && risk="HIGH"
+	[ "$profile_count" -gt 0 ] && risk="MEDIUM"
+
+	# Escalate to HIGH only if third-party MDM agents are running,
+	# or if configuration profiles/enrollment exist and MDM daemon is running
+	if [ -n "$third_party" ]; then
+		risk="HIGH"
+	elif [ "$profile_count" -gt 0 ] || (echo "$enroll_raw" | grep -qiE "(Enrolled via DEP:[[:space:]]*Yes|MDM enrollment:[[:space:]]*Yes)"); then
+		if [ -n "$procs" ]; then
+			risk="HIGH"
+		fi
+	fi
+
 	local cfg="/private/var/db/ConfigurationProfiles/Settings"
 	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
 		local org=""
@@ -201,7 +223,7 @@ deep_status() {
 	case "$risk" in
 		LOW)
 			echo -e "  ${GRN}Risk: $risk — Device appears clean${NC}"
-			echo -e "  ${GRN}Suppressions active and no running MDM processes detected.${NC}"
+			echo -e "  ${GRN}Suppressions active and no active MDM management detected.${NC}"
 			;;
 		MEDIUM)
 			echo -e "  ${YEL}Risk: $risk — Residual configuration profiles detected${NC}"
@@ -209,7 +231,7 @@ deep_status() {
 			echo -e "    ${YEL}sudo ./unleash harden${NC}    (Purges residual MDM profiles and stops background daemons)"
 			;;
 		HIGH)
-			echo -e "  ${RED}Risk: $risk — MDM background daemons/processes are running${NC}"
+			echo -e "  ${RED}Risk: $risk — Active MDM background management processes are running${NC}"
 			echo -e "  ${CYAN}Recommended Action:${NC}"
 			echo -e "    ${YEL}sudo ./unleash harden${NC}    (Terminates live MDM processes and suppresses daemons)"
 			echo -e "    ${YEL}sudo ./unleash firewall${NC}  (Enables pf packet filter to drop all MDM traffic)"
@@ -221,7 +243,7 @@ deep_status() {
 			echo -e "    2. ${YEL}sudo ./unleash harden${NC}    (Kills active MDM daemons & flushes system caches)"
 			echo -e "    3. ${YEL}sudo ./unleash firewall${NC}  (Blocks outbound Apple MDM network endpoints)"
 			echo -e "    4. ${YEL}sudo ./unleash persist${NC}   (Installs auto-heal LaunchDaemon on system boot)"
-			echo -e "    ${MAG}Note: If wiping/reformatting, boot into Recovery and run './unleash bypass'.${NC}"
+			echo -e "    ${MAG}Note: If wiping/reformatting, boot into Recovery and run './unleash recovery'.${NC}"
 			;;
 	esac
 }
@@ -244,6 +266,8 @@ deep_status_json() {
 	local enroll_state="unknown"
 	if command -v profiles &>/dev/null; then
 		enroll_state=$(sudo profiles status -type enrollment 2>/dev/null | head -1 | xargs || echo "unknown")
+		sudo pkill -9 -fi "ManagedClient" 2>/dev/null || true
+		sudo pkill -9 -fi "mdmclient" 2>/dev/null || true
 	fi
 	enroll_state="${enroll_state//\"/\\\"}"
 	json="${json}  \"enrollment_state\": \"${enroll_state}\",\n"
@@ -255,7 +279,12 @@ deep_status_json() {
 	json="${json}  \"mdm_certificates\": $mdm_certs,\n"
 
 	local running_procs=0
-	running_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+	running_procs=$(ps aux 2>/dev/null | grep -iE "(jamf|AirWatch|Workspace\s*ONE|kandji|mosyle|simplemdm)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+	if [ "$profile_count" -gt 0 ] || echo "$enroll_state" | grep -qi "Yes"; then
+		local sys_procs
+		sys_procs=$(ps aux 2>/dev/null | grep -iE "(ManagedClient\.app|/mdmclient|com\.apple\.ManagedClient)" | grep -v grep | wc -l | tr -dc '0-9' || echo 0)
+		running_procs=$((running_procs + sys_procs))
+	fi
 	running_procs="${running_procs:-0}"
 	json="${json}  \"running_mdm_processes\": $running_procs,\n"
 
