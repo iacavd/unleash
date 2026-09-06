@@ -172,8 +172,8 @@ suppress_enrollment() {
 	if [ "$DRY_RUN" = true ]; then
 		info "[DRY RUN] Would suppress MDM enrollment on $data_mount"
 		info "[DRY RUN]   - Clear DEP markers in ConfigurationProfiles/Settings"
-		info "[DRY RUN]   - Block 13+ Apple MDM domains in /etc/hosts"
-		info "[DRY RUN]   - Disable 4 enrollment daemons in launchd disabled.plist"
+		info "[DRY RUN]   - Block 14 Apple MDM domains in /etc/hosts"
+		info "[DRY RUN]   - Disable 10 enrollment daemons in launchd disabled.plist"
 		info "[DRY RUN]   - Clean MDM artifacts from /Users/*/Library"
 		return 0
 	fi

@@ -4,7 +4,7 @@
 #
 # Process exits 0, 1, 2, 3, 4 only:
 #   0  all required ok, or skip-class that does not degrade
-#      (S_ALREADY_OK, S_FV_ADD, S_PF_RECOVERY, S_NO_PROFILES_CMD, S_NO_DSCACHEUTIL)
+#      (S_ALREADY_OK, S_FV_ADD, S_PF_RECOVERY, S_NO_PROFILES_CMD, S_NO_DSCACHEUTIL, S_LIVE_ONLY)
 #   1  usage / error_exit / rollback after required mutate fail
 #      (error_exit stays 1; E_LOG_UNWRITABLE is exit 1)
 #   2  preflight, no mutation

@@ -3,7 +3,14 @@
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   load '../lib/colors.sh'
+  load '../lib/result.sh'
   load '../lib/harden.sh'
+  TEST_DIR=$(mktemp -d)
+  PLISTBUDDY="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+}
+
+teardown() {
+  rm -rf "$TEST_DIR"
 }
 
 @test "harden_live_os function exists" {
@@ -61,4 +68,58 @@ setup() {
 @test "harden_status function exists" {
   run type harden_status
   [ "$status" -eq 0 ]
+}
+
+@test "harden in Recovery skips before /private mutate" {
+  is_recovery() { return 0; }
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings"
+  RESULT_STATUS=ok
+  RESULT_REASON=""
+  harden_live_os
+  [ "$RESULT_STATUS" = skip ]
+  [ "$RESULT_REASON" = S_LIVE_ONLY ]
+  [ ! -f "$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist" ]
+}
+
+@test "harden daemon disable fail-closed does not success" {
+  is_recovery() { return 1; }
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/var/db/com.apple.xpc.launchd"
+  printf 'not-a-plist\n' > "$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  RESULT_STATUS=ok
+  RESULT_REASON=""
+  harden_live_os
+  [ "$RESULT_STATUS" = fail ]
+  [ "$RESULT_REASON" = E_PLIST_FAIL ]
+}
+
+@test "pipeline harden reads RESULT_STATUS and does not assume ok" {
+  awk '/^_pipeline_step_harden\(\)/,/^}$/' "$ROOT/lib/pipeline.sh" | grep -q harden_live_os
+  if awk '/^_pipeline_step_harden\(\)/,/^}$/' "$ROOT/lib/pipeline.sh" | grep -q 'harden complete'; then
+    echo "pipeline must not assume harden complete" >&2
+    return 1
+  fi
+  grep -q 'S_LIVE_ONLY' "$ROOT/lib/pipeline.sh"
+}
+
+@test "harden daemon disable Print true for all 10 labels" {
+  is_recovery() { return 1; }
+  DATA_ROOT="$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/var/db/com.apple.xpc.launchd"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  RESULT_STATUS=fail
+  harden_live_os
+  [ "$RESULT_STATUS" = ok ]
+  ldp="$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  while IFS= read -r label || [ -n "$label" ]; do
+    [ -n "$label" ] || continue
+    val=$("$PLISTBUDDY" -c "Print :$label" "$ldp" 2>/dev/null || true)
+    case "$val" in
+      true|1) ;;
+      *) echo "label $label is not true (got '$val')" >&2; return 1 ;;
+    esac
+  done <<EOF
+$(_harden_enrollment_labels)
+EOF
 }

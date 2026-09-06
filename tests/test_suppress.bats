@@ -99,3 +99,12 @@ XML
   [ ! -f "$TEST_DIR/private/etc/hosts" ]
 }
 
+@test "suppress_enrollment dry-run names 14 domains and 10 labels" {
+  DRY_RUN=true
+  run suppress_enrollment "$TEST_DIR"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '14 Apple MDM domains'
+  echo "$output" | grep -q '10 enrollment daemons'
+  [ ! -f "$TEST_DIR/private/etc/hosts" ]
+}
+

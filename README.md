@@ -71,13 +71,13 @@ One-command DEP wipe and suppression. Use this when the Mac already has users an
 6. Cleans user-level LaunchAgents and preferences
 7. Prompts to reboot straight back into normal macOS
 
-### wipe-dep — Wipe DEP records only
+### wipe-dep — Alias of apply
 
 ```bash
 ./unleash wipe-dep
 ```
 
-Erases all `.cloudConfig*` records and cache markers from the Data volume without altering hosts or launchd files.
+Same pipeline as `apply` / `suppress`: DEP wipe **plus** hosts sinkhole and 10 launchd overrides. It is not a hosts-free path.
 
 ### bypass — Full MDM bypass (Recovery only)
 
@@ -120,7 +120,7 @@ Checks if suppression is still intact. If any piece (DEP markers, hosts block, d
 sudo ./unleash persist
 ```
 
-Installs a LaunchDaemon at `/Library/LaunchDaemons/com.unleash.heal.plist` that runs `unleash heal` on every boot and every 24 hours after that. Logs go to `/var/log/unleash-heal.log`.
+Installs a LaunchDaemon at `/Library/LaunchDaemons/com.unleash.heal.plist` that runs `unleash heal` on every boot and every 300 seconds. Logs go to `/Library/Unleash/logs/heal.log`.
 
 Use this before a macOS upgrade. When the update finishes and reboots, heal runs automatically and re-applies anything the update reset.
 

@@ -488,11 +488,11 @@ _pipeline_exit() {
 	exit "$code"
 }
 
-# Skip-class that does not degrade: S_ALREADY_OK S_FV_ADD S_PF_RECOVERY S_NO_PROFILES_CMD S_NO_DSCACHEUTIL
+# Skip-class that does not degrade: S_ALREADY_OK S_FV_ADD S_PF_RECOVERY S_NO_PROFILES_CMD S_NO_DSCACHEUTIL S_LIVE_ONLY
 _pipeline_note_skip() {
 	local reason="$1"
 	case "$reason" in
-		S_ALREADY_OK|S_FV_ADD|S_PF_RECOVERY|S_NO_PROFILES_CMD|S_NO_DSCACHEUTIL)
+		S_ALREADY_OK|S_FV_ADD|S_PF_RECOVERY|S_NO_PROFILES_CMD|S_NO_DSCACHEUTIL|S_LIVE_ONLY)
 			return 0
 			;;
 	esac
@@ -704,11 +704,11 @@ _pipeline_step_harden() {
 		return 0
 	fi
 	if type is_recovery >/dev/null 2>&1 && is_recovery; then
-		result_skip S_ALREADY_OK pipeline harden "harden is live-OS only"
+		result_skip S_LIVE_ONLY pipeline harden "harden is live-OS only"
 		return 0
 	fi
 	harden_live_os
-	result_ok pipeline harden "harden complete"
+	# Do not assume ok: harden_live_os sets RESULT_STATUS (ok/skip/fail).
 	return 0
 }
 

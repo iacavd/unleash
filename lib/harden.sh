@@ -2,6 +2,12 @@
 # Live-OS extra cleanup. Not default on apply (needs --harden).
 # D17: profiles -D -F is data-loss; only with --remove-all-profiles.
 
+if ! type result_ok >/dev/null 2>&1; then
+	result_ok() { return 0; }
+	result_skip() { return 0; }
+	result_fail() { return 0; }
+fi
+
 _harden_enrollment_labels() {
 	printf '%s\n' \
 		com.apple.ManagedClient \
@@ -27,6 +33,19 @@ _harden_dry_run() {
 	[ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]
 }
 
+_harden_root() {
+	printf '%s' "${DATA_ROOT-}"
+}
+
+# Live kernel pkill/launchctl only when targeting this OS, not a fixture/Recovery volume.
+_harden_is_live_os() {
+	_harden_is_recovery && return 1
+	case "${DATA_ROOT:-}" in
+		""|"/") return 0 ;;
+	esac
+	return 1
+}
+
 # $1=label. Deletes every configuration profile on the Mac. Opt-in only.
 _harden_remove_all_profiles() {
 	local installed
@@ -47,14 +66,63 @@ _harden_remove_all_profiles() {
 	fi
 }
 
+# Fail-closed: every label must Print true. Sets RESULT_*.
+_harden_disable_daemons() {
+	local root ldp pb label val
+	root=$(_harden_root)
+	ldp="${root}/private/var/db/com.apple.xpc.launchd/disabled.plist"
+	pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+
+	if [ ! -x "$pb" ]; then
+		result_fail E_PLIST_FAIL harden daemons "PlistBuddy not available at $pb"
+		return 0
+	fi
+	if ! mkdir -p "$(dirname "$ldp")"; then
+		result_fail E_PLIST_FAIL harden daemons "cannot create $(dirname "$ldp")"
+		return 0
+	fi
+	if [ ! -f "$ldp" ]; then
+		if ! printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$ldp"; then
+			result_fail E_PLIST_FAIL harden daemons "cannot create $ldp"
+			return 0
+		fi
+	fi
+	while IFS= read -r label || [ -n "$label" ]; do
+		[ -n "$label" ] || continue
+		"$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
+			|| "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
+		val=$("$pb" -c "Print :$label" "$ldp" 2>/dev/null || true)
+		case "$val" in
+			true|1) ;;
+			*)
+				result_fail E_PLIST_FAIL harden daemons "label $label is not true in $ldp"
+				return 0
+				;;
+		esac
+	done <<EOF
+$(_harden_enrollment_labels)
+EOF
+	result_ok harden daemons "Enrollment daemons disabled in launchd overrides"
+	success "Enrollment daemons disabled in launchd overrides"
+	return 0
+}
+
 harden_live_os() {
 	step "Live-OS harden"
+
+	# Live-OS extra: Recovery ramdisk /private is not the Data volume.
+	if _harden_is_recovery; then
+		result_skip S_LIVE_ONLY harden live "harden is live-OS only"
+		info "Skipping harden in Recovery. Next: boot macOS and sudo ./unleash harden"
+		return 0
+	fi
 
 	if _harden_dry_run; then
 		info "[DRY RUN] Would kill MDM agents, disable enrollment labels, flush DNS"
 		if [ "${UNLEASH_REMOVE_ALL_PROFILES:-0}" = 1 ]; then
 			info "[DRY RUN] Would also run profiles -D -F (deletes every profile)"
 		fi
+		result_ok harden dry-run "dry-run"
 		return 0
 	fi
 
@@ -66,7 +134,9 @@ harden_live_os() {
 	fi
 
 	step "Resetting DEP cloud configuration markers"
-	local cfg="/private/var/db/ConfigurationProfiles/Settings"
+	local root cfg
+	root=$(_harden_root)
+	cfg="${root}/private/var/db/ConfigurationProfiles/Settings"
 	if [ -d "$cfg" ]; then
 		rm -f "$cfg/.cloudConfigHasActivationRecord" \
 		      "$cfg/.cloudConfigRecordFound" \
@@ -86,22 +156,14 @@ harden_live_os() {
 	fi
 
 	step "Disabling enrollment daemons in launchd overrides"
-	local ldp="/private/var/db/com.apple.xpc.launchd/disabled.plist"
-	local pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
-	local label
-	if [ -x "$pb" ]; then
-		mkdir -p "$(dirname "$ldp")" 2>/dev/null || true
-		if [ ! -f "$ldp" ]; then
-			printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$ldp" 2>/dev/null || true
-		fi
-		while IFS= read -r label || [ -n "$label" ]; do
-			[ -n "$label" ] || continue
-			"$pb" -c "Add :$label bool true" "$ldp" 2>/dev/null \
-				|| "$pb" -c "Set :$label true" "$ldp" 2>/dev/null || true
-		done <<EOF
-$(_harden_enrollment_labels)
-EOF
-		success "Enrollment daemons disabled in launchd overrides"
+	_harden_disable_daemons
+	if [ "${RESULT_STATUS:-ok}" = "fail" ]; then
+		return 0
+	fi
+
+	if ! _harden_is_live_os; then
+		result_ok harden daemons "harden writes finished (skip live process kill)"
+		return 0
 	fi
 
 	step "Cleaning user LaunchAgents"
@@ -169,11 +231,6 @@ EOF
 	fi
 
 	# pkill of MDM agents is allowed here (live harden), never from status/audit.
-	if _harden_is_recovery; then
-		info "In Recovery — skip live process kill (no running MDM agents on this volume)"
-		return 0
-	fi
-
 	step "Terminating MDM daemons and processes"
 	local console_uid svc launchctl
 	launchctl="${LAUNCHCTL:-/bin/launchctl}"
@@ -208,6 +265,7 @@ EOF
 	else
 		success "MDM daemons terminated"
 	fi
+	result_ok harden live "harden complete"
 }
 
 harden_status() {

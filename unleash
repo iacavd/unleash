@@ -333,9 +333,6 @@ cmd_harden() {
 	if ! is_root; then
 		error_exit "ERROR E_NOT_ROOT: harden needs root. Live-OS cleanup cannot run without sudo. Next: sudo ./unleash harden"
 	fi
-	if is_recovery; then
-		info "In Recovery — skip live process kill"
-	fi
 	harden_live_os
 }
 

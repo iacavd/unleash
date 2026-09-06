@@ -5,55 +5,49 @@ title: Commands Reference — unleash
 
 # Commands Reference
 
+Flags go after the command (`./unleash apply --unattended`). CLI is English.
+
 ## Bypass & Suppress
 
 | Command | Description | Recovery | Booted |
 |---------|-------------|----------|--------|
-| `recovery` | Auto-wipe DEP records & suppress (preserves existing users) | ✓ | ✗ |
-| `wipe-dep` | Wipe DEP cloud configuration records from disk | ✓ | ✓ |
-| `bypass` | Full bypass: create admin user + suppress MDM | ✓ | ✗ |
-| `suppress` | Suppress enrollment without creating a user | ✓ | ✓ |
+| `apply` | Apply MDM suppression (hosts + daemons + DEP wipe) | ✓ | ✓ |
+| `recovery` | Apply suppression from Recovery (no admin user) | ✓ | ✗ |
+| `wipe-dep` | Alias of apply (hosts + daemons + DEP wipe) | ✓ | ✓ |
+| `bypass` | Apply and create a local admin | ✓ | ✗ |
+| `suppress` | Alias of apply (no admin user) | ✓ | ✓ |
 | `heal` | Re-apply suppression after macOS updates | ✓ | ✓ |
-| `persist` | Install LaunchDaemon for auto-heal on every boot | ✓ | ✓ |
-| `unpersist` | Remove the auto-heal LaunchDaemon | ✗ | ✓ |
+| `persist` | Install heal LaunchDaemon (boot + every 300s) | ✓ | ✓ |
+| `unpersist` | Remove the heal LaunchDaemon | ✗ | ✓ |
+| `auto-all` | Unattended apply (requires intent sidecar) | ✓ | ✓ |
 
-### `recovery`
-One-touch automated DEP eradication and suppression from macOS Recovery mode. Wipes on-disk `.cloudConfig*` records, disables enrollment daemons, blocks hosts, and preserves existing user accounts without creating new ones.
-**Must run from Recovery.**
+### `apply` / `recovery` / `suppress` / `wipe-dep`
+Same pipeline: wipe on-disk `.cloudConfig*` records, disable 10 enrollment daemons, block 14 MDM domains in hosts, persist heal. `wipe-dep` is **not** a hosts-free path.
+**`recovery` must run from Recovery.**
 ```bash
+./unleash apply
 ./unleash recovery
-```
-
-### `wipe-dep`
-Physically unlinks `.cloudConfig*` and enrollment nag files from the target Data volume without modifying hosts or launchd overrides.
-```bash
+./unleash suppress
 ./unleash wipe-dep
 ```
 
 ### `bypass`
-Creates a temporary admin account and suppresses all 5 layers of MDM.
+Creates a local admin (`--username` + `--password-file`; min 8; no default `1234`) and applies suppression.
 **Must run from Recovery.**
 ```bash
-./unleash bypass
-```
-
-### `suppress`
-Silences MDM enrollment without creating a new user.
-Works from both Recovery and booted systems.
-```bash
-sudo ./unleash suppress
+./unleash bypass --username NAME --password-file FILE
 ```
 
 ### `heal`
 Re-applies suppression after macOS updates re-enable enrollment daemons.
-On booted systems, needs sudo. With `persist`, runs automatically on each boot.
+On booted systems, needs sudo. With `persist`, runs automatically on each boot and every 300 seconds.
 ```bash
 sudo ./unleash heal
 ```
 
 ### `persist`
-Installs a LaunchDaemon that runs `heal` automatically on every boot.
-Survives macOS updates.
+Installs a LaunchDaemon that runs `heal` on every boot and every 300 seconds.
+Logs: `/Library/Unleash/logs/heal.log`.
 ```bash
 sudo ./unleash persist
 ```
@@ -104,31 +98,33 @@ sudo ./unleash whitelist
 
 ---
 
-## Living System
+## Live OS
 
 | Command | Description | Privilege |
 |---------|-------------|-----------|
-| `harden` | Kill MDM processes + remove profiles + flush DNS | sudo |
-| `audit` | Deep system scan with risk score | sudo |
+| `harden` | Kill MDM processes + flush DNS (`profiles -D -F` only with `--remove-all-profiles`) | sudo |
+| `audit` | Alias of `status` (never kills processes) | — |
+| `check` | Pre-format / pre-upgrade safety report | sudo |
 
 ### `harden`
-Kills running MDM processes and flushes DNS cache.
+Kills running MDM processes and flushes DNS cache. Live-OS only (skipped in Recovery).
 Does **not** run `profiles -D -F` unless you pass `--remove-all-profiles` (that deletes every profile).
-Useful when MDM is actively enrolling on a booted system.
 ```bash
 sudo ./unleash harden
 sudo ./unleash harden --remove-all-profiles
 ```
 
 ### `audit`
-Performs a deep MDM scan:
-- Checks DEP markers
-- Scans for configuration profiles
-- Checks launch agents and daemons
-- Searches for MDM certificates
-- Generates a risk score (0–100)
+Alias of `status`. Never kills processes. Risk is LOW / MEDIUM / HIGH / CRITICAL (not 0–100).
 ```bash
-sudo ./unleash audit
+./unleash audit
+./unleash status --json
+```
+
+### `check`
+Returns **SAFE TO FORMAT** (no MDM) or **MDM DETECTED** (will lock after wipe).
+```bash
+sudo ./unleash check
 ```
 
 ---
@@ -137,35 +133,15 @@ sudo ./unleash audit
 
 | Command | Description |
 |---------|-------------|
-| `check` | Pre-format / pre-upgrade safety report |
-| `monitor` | Start background MDM watcher (5 min interval) |
-| `monitor-install` | Install monitor as a LaunchDaemon |
-| `monitor-uninstall` | Remove monitor LaunchDaemon |
-| `monitor-stop` | Stop the monitor daemon |
-| `monitor-status` | Check if the monitor is running |
-| `history` | Show event log from monitor/heal runs |
-| `history-clear` | Clear the event log |
+| `monitor` | Alias of `persist` (heal daemon) |
+| `monitor-install` | Alias of `persist` |
+| `monitor-uninstall` | Alias of `unpersist` |
 
-### `check`
-Returns **SAFE TO FORMAT** (no MDM) or **MDM DETECTED** (will lock after wipe).
-Also checks upgrade safety for macOS updates.
-```bash
-sudo ./unleash check
-```
+There is no separate KeepAlive watcher and no Discord webhook loop.
 
-### `monitor`
-Background daemon that checks MDM state every 5 minutes.
-Sends a macOS notification if MDM tries to re-enroll.
-Supports optional `--webhook` for Discord alerts.
 ```bash
+sudo ./unleash persist
 sudo ./unleash monitor
-sudo ./unleash monitor --webhook https://discord.com/api/webhooks/...
-```
-
-### `history`
-Shows the event log from previous monitor and heal runs.
-```bash
-sudo ./unleash history
 ```
 
 ---
@@ -174,156 +150,30 @@ sudo ./unleash history
 
 | Command | Description |
 |---------|-------------|
-| `backup` | Save current state (hosts, profiles, launchd, settings) |
-| `restore` | Restore from a previous backup |
-| `dualboot` | Target an external macOS install |
+| `backup` | Save current state (hosts, profiles, launchd, pf.conf) |
+| `restore` | Restore from a snapshot (`--snapshot ID`) |
+| `backup-list` | List snapshots |
+| `dualboot` | Apply to an external macOS install (same pipeline as apply) |
+| `uninstall` | Remove Unleash persist, pf anchors, hosts blocks, launchd overrides |
 
-### `backup`
-Saves `/etc/hosts`, MDM profile state, launchd disabled overrides, and Unleash config.
+### `backup` / `restore`
 ```bash
 sudo ./unleash backup
-```
-
-### `restore`
-Reverts the system to a previously saved state.
-```bash
-sudo ./unleash restore
+sudo ./unleash restore --snapshot ID
+sudo ./unleash backup-list
 ```
 
 ### `dualboot`
-Creates an admin account and applies suppression to an external/bootcamp volume.
+Same pipeline as `apply`, targeted at an external volume (`--volume`).
 ```bash
-sudo ./unleash dualboot
-```
-
----
-
-## Smart Commands (removed in 2.1)
-
-`init`, `suggest`, `remediate`, `predict`, and `telemetry` were overlay commands. They print a one-line "removed" and are not sourced.
-
-### `init`
-Interactive wizard that runs the full setup:
-firewall → monitor → persist → backup → audit.
-```bash
-sudo ./unleash init
-```
-
-### `suggest`
-Analyzes your system and provides risk-based recommendations.
-```bash
-sudo ./unleash suggest
-```
-
-### `remediate`
-Per-org MDM cleanup. Supports: JAMF, Mosyle, Addigy, Kandji, VMware.
-Auto-detects the org from your DEP record.
-```bash
-sudo ./unleash remediate
-```
-
-### `predict`
-Reads the serial number prefix and checks against known MDM org prefixes.
-Useful before buying a used Mac.
-```bash
-./unleash predict ABC12345678
-```
-
-### `telemetry`
-Manages anonymous usage stats (opt-in, OFF by default).
-```bash
-./unleash telemetry on
-./unleash telemetry off
-./unleash telemetry status
-```
-
----
-
-## VPN Kill-Switch
-
-| Command | Description |
-|---------|-------------|
-| `vpn-kill` | Install pf kill-switch — blocks MDM outside VPN |
-| `vpn-kill-remove` | Remove the VPN kill-switch |
-| `vpn-kill-status` | Check VPN kill-switch state |
-
-Designed for org-provided Macs that must enroll but should only communicate while on VPN.
-Blocks MDM IPs when the device is NOT connected to your VPN tunnel.
-```bash
-sudo ./unleash vpn-kill
-sudo ./unleash vpn-kill-status
-sudo ./unleash vpn-kill-remove
-```
-
----
-
-## Management
-
-| Command | Description |
-|---------|-------------|
-| `update` | Self-update from the latest GitHub release |
-| `uninstall` | Complete removal with safety prompts |
-| `reinstall` | Uninstall + reinstall (persist + whitelist + monitor) |
-| `config` | View or edit persistent settings |
-| `report` | Full system report (markdown or JSON) |
-| `demo` | Simulated bypass flow (no real changes) |
-| `version` | Show version |
-
-### `update`
-Downloads the latest release from GitHub. GPG-verifies the signature.
-```bash
-sudo ./unleash update
+sudo ./unleash dualboot --volume "/Volumes/External - Data"
 ```
 
 ### `uninstall`
 Removes Unleash persist, pf anchors, hosts blocks we added, and launchd overrides we set.
-Does **not** restore DEP/ABM enrollment or original MDM state.
+Does **not** restore DEP/ABM enrollment or original MDM state. No safety prompts.
 ```bash
 sudo ./unleash uninstall
-```
-
-### `reinstall`
-Uninstalls then re-applies persist + whitelist + monitor.
-```bash
-sudo ./unleash reinstall
-```
-
-### `config`
-View or edit persistent settings in `~/.unleash.conf`.
-```bash
-./unleash config
-./unleash config show
-./unleash config set key value
-```
-
-### `report`
-Generates a full status report. Supports `--json` for machine-readable output.
-```bash
-sudo ./unleash report
-sudo ./unleash report --json
-```
-
-### `demo`
-Runs a simulated bypass flow. No real changes are made.
-```bash
-./unleash demo
-```
-
----
-
-## Discord Bot
-
-| Command | Description |
-|---------|-------------|
-| `discord-bot` | Start Discord DM alert bot |
-| `discord-bot-stop` | Stop the Discord bot |
-| `discord-bot-status` | Check if the Discord bot is running |
-
-Sends Discord DMs when MDM activity is detected.
-```bash
-sudo ./unleash discord-bot <token> <userId>
-sudo ./unleash discord-bot-status
-sudo ./unleash discord-bot-stop
 ```
 
 ---
@@ -332,31 +182,40 @@ sudo ./unleash discord-bot-stop
 
 | Command | Description |
 |---------|-------------|
-| `doctor` | Pre-flight diagnostics — root, Recovery, libs, disk, dependencies |
-| `status` | MDM enrollment status (Recovery only, use `-d` for deep) |
-| `test` | Dry-run simulation of any command |
+| `doctor` | Pre-flight diagnostics (`--gate` fail-closed) |
+| `status` | MDM enrollment status (live and Recovery) |
+| `report` | Status report (markdown or `--json`) |
+| `config` | Persistent settings |
+| `update` | Self-update from GitHub releases |
+| `webhook-test` | Optional webhook POST (not used by heal) |
 
 ### `doctor`
-Checks: root privileges, Recovery mode detection, bash version,
-disk/volume availability required libraries, and internet connectivity.
+Checks tools, volume, secrets, disk space. `--gate` exits 0 or 2.
 ```bash
 ./unleash doctor
+./unleash doctor --gate
 ```
 
 ### `status`
-Shows DEP marker state, hosts file, daemon overrides.
-Only works from Recovery. Use `check` or `audit` on booted systems.
+Shows DEP markers, hosts block, daemon overrides, and probes. Works live and from Recovery. Never kills processes.
 ```bash
 ./unleash status
-./unleash status -d
+./unleash status --json
 ```
 
-### `test`
-Dry-run mode. Simulates a command without making real changes.
+### `report`
 ```bash
-./unleash test bypass
-./unleash test all
+sudo ./unleash report
+sudo ./unleash report --json
 ```
+
+---
+
+## Removed in 2.1
+
+Overlay commands print a one-line "removed" and are not sourced:
+
+`init` `suggest` `remediate` `predict` `telemetry` `discord-bot` `tui` `web` `simulate` `upgrade-os` `vpn-kill` `test` `reinstall` `quarantine` `demo` `history` `history-clear` `fleet-apply` `apns-block` `apns-unblock`
 
 ---
 
@@ -365,19 +224,25 @@ Dry-run mode. Simulates a command without making real changes.
 ```
 by  = bypass         sv  = suppress        st  = status
 ls  = status         fw  = firewall        fw-off = firewall-off
-wl  = whitelist      mn  = monitor         mn-install = monitor-install
-mn-uninstall = monitor-uninstall           mn-stop = monitor-stop
-mn-st = monitor-status                     doc = doctor
-up  = update         uni = uninstall       rei = reinstall
-vk  = vpn-kill       vkr = vpn-kill-remove vks = vpn-kill-status
+wl  = whitelist      mn  = monitor (persist)
+mn-install = persist mn-uninstall = unpersist
+doc = doctor         up  = update          uni = uninstall
+wipe = wipe-dep      rec = recovery
 ```
 
 ---
 
-## Global Options
+## Options (after the command)
 
 | Option | Effect |
 |--------|--------|
+| `--unattended` | No prompts (auto-all implies this) |
 | `--verbose` | Show debug messages |
 | `--dry-run` | Simulate without making changes |
+| `--json` | Machine-readable stdout |
 | `--log-file <path>` | Write logs to file (appended) |
+| `--volume <path>` | Target Data volume |
+| `--password-file <f>` | Admin password from file |
+| `--remove-all-profiles` | Harden: run `profiles -D -F` (deletes every profile) |
+| `--harden` | Live-OS harden during apply |
+| `--snapshot <id>` | Restore snapshot ID |

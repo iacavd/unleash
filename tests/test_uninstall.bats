@@ -88,7 +88,20 @@ teardown() {
   printf 'anchor\n' > "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
   printf '# Added by unleash — DEP enrollment block\n0.0.0.0 iprofiles.apple.com\n::      iprofiles.apple.com\nkeep-me example.com\n' > "$TEST_DIR/private/etc/hosts"
   printf 'hook\n' > "$TEST_DIR/private/etc/rc.unleash-update.local"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  ldp="$TEST_DIR/private/var/db/com.apple.xpc.launchd/disabled.plist"
+  pb="${PLISTBUDDY:-/usr/libexec/PlistBuddy}"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > "$ldp"
+  while IFS= read -r label || [ -n "$label" ]; do
+    [ -n "$label" ] || continue
+    "$pb" -c "Add :$label bool true" "$ldp"
+    val=$("$pb" -c "Print :$label" "$ldp")
+    case "$val" in
+      true|1) ;;
+      *) echo "seed failed for $label" >&2; return 1 ;;
+    esac
+  done <<EOF
+$(_uninstall_enrollment_labels)
+EOF
 
   run do_uninstall
   [ "$status" -eq 0 ]
@@ -103,4 +116,16 @@ teardown() {
   grep -q 'keep-me example.com' "$TEST_DIR/private/etc/hosts"
   echo "$output" | grep -qi 'does not restore DEP'
   ! echo "$output" | grep -qi 'original state'
+  while IFS= read -r label || [ -n "$label" ]; do
+    [ -n "$label" ] || continue
+    val=$("$pb" -c "Print :$label" "$ldp" 2>/dev/null || true)
+    case "$val" in
+      true|1)
+        echo "label $label still true after uninstall" >&2
+        return 1
+        ;;
+    esac
+  done <<EOF
+$(_uninstall_enrollment_labels)
+EOF
 }
