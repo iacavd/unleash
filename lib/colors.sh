@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 RED='\033[1;31m'
 GRN='\033[1;32m'
 BLU='\033[1;34m'
@@ -8,98 +9,140 @@ NC='\033[0m'
 
 LOG_FILE=""
 VERBOSE=false
+# shellcheck disable=SC2034
 DRY_RUN=false
 
 log() {
-  local level="$1"
-  local msg="$2"
+  local level="${1:-INFO}"
+  if [ $# -gt 0 ]; then
+    shift
+  fi
+
+  local module="unleash"
+  local event="log"
+  local msg=""
+
+  if [ $# -ge 3 ]; then
+    module="$1"
+    event="$2"
+    shift 2
+    msg="$*"
+  else
+    msg="$*"
+  fi
+
+  local level_kv=""
   local color=""
   local label=""
 
   case "$level" in
-    ERROR)   color="$RED";   label="ERR"  ;;
-    WARN)    color="$YEL";   label="WRN"  ;;
-    OK)      color="$GRN";   label=" OK"  ;;
-    INFO)    color="$BLU";   label="INF"  ;;
-    STEP)    color="$CYAN";  label="STP"  ;;
-    DEBUG)   color="$MAG";   label="DBG"  ;;
-    *)       color="$NC";    label="LOG"  ;;
+    ERROR|error) level_kv="error"; color="$RED";  label="ERR" ;;
+    WARN|warn)   level_kv="warn";  color="$YEL";  label="WRN" ;;
+    OK|ok)       level_kv="ok";    color="$GRN";  label=" OK" ;;
+    INFO|info)   level_kv="info";  color="$BLU";  label="INF" ;;
+    STEP|step)   level_kv="step";  color="$CYAN"; label="STP" ;;
+    DEBUG|debug) level_kv="debug"; color="$MAG";  label="DBG" ;;
+    *)           level_kv="info";  color="$NC";   label="LOG" ;;
   esac
 
-  if [ "$level" = "DEBUG" ] && [ "$VERBOSE" = false ]; then
-    return
+  if [ "$level_kv" = "debug" ] && [ "$VERBOSE" = false ]; then
+    return 0
   fi
 
+  msg="${msg//$'\n'/ }"
+  msg="${msg//$'\r'/ }"
+
   local ts
-  ts=$(date '+%H:%M:%S')
-  echo -e "${color}[${label}]${NC} ${msg}"
+  ts=$(date '+%Y-%m-%dT%H:%M:%S')
+  local kv="ts=${ts} level=${level_kv} module=${module} event=${event} msg=${msg}"
+
+  if [ -t 2 ]; then
+    printf '%b%s\n' "${color}[${label}]${NC} " "$kv" >&2
+  else
+    printf '%s\n' "$kv" >&2
+  fi
 
   if [ -n "$LOG_FILE" ]; then
-    echo "[${ts}] [${label}] ${msg}" >> "$LOG_FILE" 2>/dev/null || true
+    if ! printf '%s\n' "$kv" >> "$LOG_FILE"; then
+      local bad_path="$LOG_FILE"
+      # Avoid recursing into another failed append via error_exit → log.
+      LOG_FILE=""
+      error_exit "ERROR E_LOG_UNWRITABLE: cannot write log file '${bad_path}'. Next: pass --log-file to a writable path."
+    fi
   fi
 }
 
+set_log_file() {
+  local path="${1:-}"
+  if [ -z "$path" ]; then
+    LOG_FILE=""
+    return 0
+  fi
+  if ! : >> "$path"; then
+    error_exit "ERROR E_LOG_UNWRITABLE: cannot write log file '${path}'. Next: pass --log-file to a writable path."
+  fi
+  LOG_FILE="$path"
+}
+
 error_exit() {
-  log "ERROR" "$1" >&2
+  log "ERROR" "$1"
   exit 1
 }
 
 warn() {
-  log "WARN" "$1"
+  log "WARN" "$@"
 }
 
 success() {
-  log "OK" "$1"
+  log "OK" "$@"
 }
 
 info() {
-  log "INFO" "$1"
+  log "INFO" "$@"
 }
 
 step() {
-  log "STEP" "$1"
+  log "STEP" "$@"
 }
 
 debug() {
-  log "DEBUG" "$1"
+  log "DEBUG" "$@"
 }
 
 header() {
   local title="$1"
-  local len="${#title}"
-  local line
-  line=$(printf '%*s' "$((len + 4))" | tr ' ' '═')
-  echo ""
-  echo -e "${CYAN}╔${line}╗${NC}"
-  echo -e "${CYAN}║  ${title}  ║${NC}"
-  echo -e "${CYAN}╚${line}╝${NC}"
-  echo ""
+  log "INFO" "unleash" "header" "$title"
 }
 
 begin() {
-  local label="$1"
-  echo -ne "${CYAN}  ${label} ... ${NC}"
+  log "STEP" "unleash" "begin" "$1"
 }
 
 spinner() {
-  local pid=$1
+  local pid="$1"
   local msg="${2:-Working}"
   local spin='-\|/'
   local i=0
+  if [ ! -t 2 ]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 0.2
+    done
+    return 0
+  fi
   while kill -0 "$pid" 2>/dev/null; do
-    i=$(( (i+1) % 4 ))
-    echo -ne "\r${CYAN}  ${msg} ... ${spin:$i:1}${NC}"
+    i=$(( (i + 1) % 4 ))
+    printf '\r%b%s%b' "$CYAN" "  ${msg} ... ${spin:$i:1}" "$NC" >&2
     sleep 0.2
   done
-  echo -ne "\r${CYAN}  ${msg} ... ${NC}"
+  printf '\r%b%s%b' "$CYAN" "  ${msg} ... " "$NC" >&2
 }
 
 end_ok() {
-  echo -e "${GRN}✓${NC}"
+  log "OK" "unleash" "end" "ok"
 }
 
 end_fail() {
-  echo -e "${RED}✗${NC}"
+  log "ERROR" "unleash" "end" "fail"
 }
 
 prompt_default() {
@@ -107,7 +150,12 @@ prompt_default() {
   local prompt_text="$2"
   local default="$3"
   local value
-  read -p "${CYAN}${prompt_text}${NC} (default '${default}'): " value
+  if [ -t 2 ]; then
+    printf '%b' "${CYAN}${prompt_text}${NC} (default '${default}'): " >&2
+  else
+    printf '%s' "${prompt_text} (default '${default}'): " >&2
+  fi
+  read -r value
   value="${value:=$default}"
   eval "$var_name=\"$value\""
 }
@@ -115,6 +163,7 @@ prompt_default() {
 confirm() {
   local prompt="$1"
   local response
-  read -p "${prompt} (y/N): " response
+  printf '%s' "${prompt} (y/N): " >&2
+  read -r response
   [[ "$response" =~ ^[Yy]$ ]]
 }
