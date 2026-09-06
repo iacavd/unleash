@@ -739,11 +739,12 @@ run_probes() {
 		return 0
 	fi
 	result_ok heal probes "required probes passed"
-	probes_write_last_good
+	probes_write_last_good || true
 	return 0
 }
 
 # Clean pass only. Never replace last-good with a dirty snapshot.
+# Always return 0: last-good is best-effort and must not fail status/heal probes.
 probes_write_last_good() {
 	[ "${RESULT_STATUS:-}" = "fail" ] && return 0
 	local volume="${PIPELINE_VOLUME:-${DATA_ROOT:-}}"
@@ -760,7 +761,7 @@ probes_write_last_good() {
 ${PROBE_LINES}
 EOF
 	if type journal_last_good_write >/dev/null 2>&1; then
-		journal_last_good_write "$volume" "${lg[@]}"
+		journal_last_good_write "$volume" "${lg[@]}" || true
 		return 0
 	fi
 	local dir dest tmp ts line
@@ -780,7 +781,8 @@ EOF
 			printf '%s\n' "$line"
 		done
 	} > "$tmp" || { rm -f "$tmp"; return 0; }
-	mv "$tmp" "$dest"
+	mv "$tmp" "$dest" || { rm -f "$tmp"; return 0; }
+	return 0
 }
 
 status_emit_json() {

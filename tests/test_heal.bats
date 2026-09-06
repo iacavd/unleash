@@ -301,6 +301,18 @@ teardown() {
   cmp -s "$lg" "$TEST_DIR/last-good.clean"
 }
 
+@test "last-good write failure does not fail clean run_probes" {
+  DATA_ROOT="$TEST_DIR"
+  suppress_enrollment "$TEST_DIR"
+  persist_copy "$TEST_DIR"
+  mkdir -p "$TEST_DIR/private/etc/pf.anchors/com.unleash"
+  printf 'block drop from any to 17.0.0.0/8\n' > "$TEST_DIR/private/etc/pf.anchors/com.unleash/mdm"
+  journal_last_good_write() { return 1; }
+  set -e
+  run_probes
+  [ "$RESULT_STATUS" = "ok" ]
+}
+
 @test "persist not-writable dest is status 1 E_PERSIST_PATH" {
   USB=$(mktemp -d)
   mkdir -p "$USB/lib"

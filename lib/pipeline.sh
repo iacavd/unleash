@@ -248,13 +248,14 @@ _pipeline_journal_step_status() {
 	printf '%s' "$last"
 }
 
-# Atomic replace on the same volume (write temp + mv).
+# Atomic replace on the same volume (write temp + mv). Best-effort: always return 0
+# so a read-only /Library/Unleash/state cannot fail a clean status/heal probe.
 journal_last_good_write() {
 	local volume="${1:-}"
 	shift
 	local dir dest tmp ts line
 	dir="$(_state_dir)"
-	mkdir -p "$dir" || return 1
+	mkdir -p "$dir" || return 0
 	dest="$dir/last-good"
 	tmp="${dest}.tmp.$$"
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -264,8 +265,9 @@ journal_last_good_write() {
 		for line in "$@"; do
 			printf '%s\n' "$line"
 		done
-	} > "$tmp" || { rm -f "$tmp"; return 1; }
-	mv "$tmp" "$dest"
+	} > "$tmp" || { rm -f "$tmp"; return 0; }
+	mv "$tmp" "$dest" || { rm -f "$tmp"; return 0; }
+	return 0
 }
 
 journal_degraded_write() {
