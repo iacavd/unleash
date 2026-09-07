@@ -140,7 +140,8 @@ EOF
     return 2
   fi
 
-  if [ "${UNLEASH_UNATTENDED:-0}" = 1 ] || [ "${UNLEASH_RESUME:-0}" = 1 ]; then
+  # Intent is required for --unattended (daemon / USB). Interactive heal is operator-present.
+  if [ "${UNLEASH_UNATTENDED:-0}" = 1 ]; then
     if [ "${UNLEASH_INTENT_FLAG:-0}" != 1 ]; then
       if ! usb_sidecar_present 2>/dev/null; then
         if [ -n "${UNLEASH_VOLUME:-}" ] && [ -d "${UNLEASH_VOLUME}" ] && type intent_valid >/dev/null 2>&1; then

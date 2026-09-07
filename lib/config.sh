@@ -135,7 +135,17 @@ check_or_consume_intent() {
     return 0
   fi
 
-  if [ "${UNLEASH_UNATTENDED:-0}" != 1 ] && [ "${UNLEASH_RESUME:-0}" != 1 ]; then
+  # Interactive (not --unattended): operator is present. Heal writes intent for the daemon.
+  if [ "${UNLEASH_UNATTENDED:-0}" != 1 ]; then
+    if [ "${UNLEASH_RESUME:-0}" = 1 ]; then
+      if [ "${UNLEASH_DRY_RUN:-0}" = 1 ] || [ "${DRY_RUN:-false}" = true ]; then
+        return 0
+      fi
+      write_intent "$data_root" || {
+        result_fail E_INTENT_MISSING pipeline intent "cannot write state/intent for interactive heal"
+        return 1
+      }
+    fi
     return 0
   fi
 
@@ -144,7 +154,7 @@ check_or_consume_intent() {
   fi
 
   if [ "${UNLEASH_RESUME:-0}" = 1 ]; then
-    result_fail E_INTENT_MISSING pipeline intent "heal requires $path with matching volume_uuid"
+    result_fail E_INTENT_MISSING pipeline intent "heal --unattended requires $path (run sudo ./unleash heal once from a terminal, or pass --i-own-this-device)"
     return 1
   fi
 

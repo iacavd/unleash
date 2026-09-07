@@ -31,6 +31,18 @@ setup() {
   echo "$output" | grep -q E_PREFLIGHT_TOOLS
 }
 
+@test "doctor --gate interactive resume does not require sidecar" {
+  load '../lib/result.sh'
+  UNLEASH_UNATTENDED=0
+  UNLEASH_RESUME=1
+  UNLEASH_INTENT_FLAG=0
+  UNLEASH_VOLUME=$(mktemp -d)
+  mkdir -p "$UNLEASH_VOLUME/private/var/db/dslocal/nodes/Default"
+  run run_doctor --gate
+  rm -rf "$UNLEASH_VOLUME"
+  ! echo "$output" | grep -q E_INTENT_MISSING
+}
+
 @test "doctor --gate does not reject disk identifier volume" {
   load '../lib/result.sh'
   UNLEASH_UNATTENDED=1

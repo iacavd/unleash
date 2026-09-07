@@ -1,15 +1,19 @@
-# curl %{http_code} 000 means no HTTP response. That is not reachable.
+# curl %{http_code} 000 (or 000 concatenated with a fallback) is not reachable.
 http_code_reachable() {
-  case "${1:-}" in
-    ''|000) return 1 ;;
-    *) return 0 ;;
+  local code="${1:-}"
+  code="${code#"${code%%[![:space:]]*}"}"
+  code="${code%"${code##*[![:space:]]}"}"
+  case "$code" in
+    ''|000|000000|000*) return 1 ;;
   esac
+  return 0
 }
 
 run_preformat_check() {
   header "Pre-Format MDM Assessment"
 
   local clean=true
+  local fw_rules=""
 
   step "Checking DEP activation record..."
   local dep_file="/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound"
@@ -23,13 +27,16 @@ run_preformat_check() {
     fi
 
     if [ -n "$org" ]; then
-      echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
-      echo -e "  ${YEL}Device assigned to: $org${NC}"
+      echo -e "  ${RED}On-disk DEP record present — assigned to: $org${NC}"
+      echo -e "  ${YEL}A wipe can re-lock this Mac. Hosts block does not survive a format.${NC}"
       clean=false
     elif [ "$is_fetch_err" = "true" ]; then
-      echo -e "  ${GRN}DEP cloud check blocked (CloudConfigFetchError recorded — domain block active)${NC}"
+      echo -e "  ${YEL}On-disk DEP record present (CloudConfigFetchError — domain block is active now).${NC}"
+      echo -e "  ${YEL}A wipe still re-enrolls: format removes /etc/hosts. Not safe to format.${NC}"
+      clean=false
     else
-      echo -e "  ${RED}ACTIVE DEP RECORD FOUND${NC}"
+      echo -e "  ${RED}On-disk DEP record present${NC}"
+      echo -e "  ${YEL}A wipe can re-lock this Mac.${NC}"
       clean=false
     fi
   else
@@ -40,12 +47,12 @@ run_preformat_check() {
   if command -v curl &>/dev/null; then
     local enroll_check
     enroll_check=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
-      "https://deviceenrollment.apple.com/" 2>/dev/null || echo "000")
-    # HTTP 000 is a failed transport, not a success. Do not treat it as reachable.
+      "https://deviceenrollment.apple.com/" 2>/dev/null) || enroll_check="000"
+    [ -n "$enroll_check" ] || enroll_check="000"
     if http_code_reachable "$enroll_check"; then
-      echo -e "  ${YEL}deviceenrollment.apple.com reachable${NC}"
+      echo -e "  ${YEL}deviceenrollment.apple.com reachable (HTTP $enroll_check). Hosts block may not apply to this check.${NC}"
     else
-      echo -e "  ${GRN}deviceenrollment.apple.com blocked (code $enroll_check)${NC}"
+      echo -e "  ${GRN}deviceenrollment.apple.com not reachable (code ${enroll_check})${NC}"
     fi
   else
     echo -e "  ${YEL}curl not available, skipping URL check${NC}"
@@ -80,7 +87,6 @@ run_preformat_check() {
 
   step "Checking pf firewall status..."
   if command -v pfctl &>/dev/null; then
-    local fw_rules=""
     fw_rules=$(pfctl -a "com.unleash/mdm" -s rules 2>/dev/null || true)
     fw_rules="${fw_rules}$(pfctl -a "com.unleash.selective" -s rules 2>/dev/null || true)"
     if echo "$fw_rules" | grep -q "block"; then
@@ -100,19 +106,27 @@ run_preformat_check() {
   fi
 
   echo ""
-  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-  if [ "$clean" = true ]; then
-    echo -e "${CYAN}║${NC}  ${GRN}SAFE TO FORMAT${NC} — No MDM enrollment detected                     ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  This Mac should not lock after a wipe.                          ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  If you want defense-in-depth anyway, run:                       ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    ${YEL}sudo ./unleash persist && sudo ./unleash firewall${NC}              ${CYAN}║${NC}"
-  else
-    echo -e "${CYAN}║${NC}  ${RED}MDM DETECTED${NC} — This Mac WILL lock after format                ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  Run from Recovery after wipe: ${YEL}./unleash bypass${NC}                  ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  To survive macOS updates (not full wipes):                            ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    ${YEL}sudo ./unleash persist && sudo ./unleash firewall${NC}              ${CYAN}║${NC}"
+  local persist_on=0 fw_on=0
+  if [ -f "/Library/LaunchDaemons/com.unleash.heal.plist" ]; then
+    persist_on=1
   fi
-  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  if printf '%s\n' "$fw_rules" | grep -q "block"; then
+    fw_on=1
+  fi
+  if [ "$clean" = true ]; then
+    echo -e "${GRN}Verdict: no live MDM enrollment.${NC}"
+    echo "A wipe is unlikely to re-lock unless Apple DEP still has this serial."
+    if [ "$persist_on" != 1 ]; then
+      echo "Next: sudo ./unleash persist"
+    fi
+    if [ "$fw_on" != 1 ]; then
+      echo "Next: sudo ./unleash firewall"
+    fi
+  else
+    echo -e "${RED}Verdict: not safe to format.${NC}"
+    echo "On-disk DEP or enrollment is still present. A wipe can re-lock this Mac."
+    echo "Next: boot Recovery and run ./unleash apply --unattended"
+  fi
 }
 
 check_upgrade_safety() {
@@ -138,7 +152,7 @@ check_upgrade_safety() {
     echo -e "  ${GRN}pf firewall active — survives upgrade${NC}"
   else
     echo -e "  ${YEL}No pf firewall — upgrade may restore MDM connectivity${NC}"
-    echo -e "  ${YEL}Fix: sudo ./unleash whitelist${NC}"
+    echo -e "  ${YEL}Fix: sudo ./unleash firewall${NC}"
     issues=$((issues + 1))
   fi
 

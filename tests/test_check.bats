@@ -25,8 +25,23 @@ setup() {
   [ "$status" -ne 0 ]
   run http_code_reachable ""
   [ "$status" -ne 0 ]
+  run http_code_reachable 000000
+  [ "$status" -ne 0 ]
   run http_code_reachable 200
   [ "$status" -eq 0 ]
   run http_code_reachable 403
   [ "$status" -eq 0 ]
+}
+
+@test "check.sh does not print SAFE TO FORMAT box art" {
+  ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  if grep -q '╔' "$ROOT/lib/check.sh"; then
+    echo "box drawing still in check.sh" >&2
+    return 1
+  fi
+  if grep -q 'SAFE TO FORMAT' "$ROOT/lib/check.sh"; then
+    echo "SAFE TO FORMAT slogan still in check.sh" >&2
+    return 1
+  fi
+  grep -q 'not safe to format' "$ROOT/lib/check.sh"
 }

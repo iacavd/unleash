@@ -163,8 +163,7 @@ harden_live_os() {
 		      "$cfg/com.apple.mdm.prelogin.plist" 2>/dev/null || true
 		touch "$cfg/.cloudConfigRecordNotFound" 2>/dev/null || true
 		if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-			info "SIP disabled is required to delete .cloudConfigRecordFound on a live volume."
-			info "SIP enabled — on-disk DEP wipe needs Recovery. Next: ./unleash recovery"
+			info "Could not delete .cloudConfigRecordFound (SIP). Next: boot Recovery and run ./unleash apply --unattended"
 		else
 			success "DEP cached records cleared; bypass markers set"
 		fi

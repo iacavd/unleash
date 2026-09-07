@@ -129,6 +129,29 @@ _write_intent() {
   grep -q 'S_ALREADY_OK' "$TEST_DIR/Library/Unleash/state/journal"
 }
 
+@test "interactive heal writes intent without USB sidecar" {
+  UNLEASH_UNATTENDED=0
+  UNLEASH_RESUME=1
+  UNLEASH_INTENT_FLAG=0
+  SCRIPT_DIR="$TEST_DIR/no-usb"
+  mkdir -p "$SCRIPT_DIR"
+  check_or_consume_intent "$TEST_DIR"
+  [ -f "$TEST_DIR/Library/Unleash/state/intent" ]
+  grep -q 'owned=1' "$TEST_DIR/Library/Unleash/state/intent"
+}
+
+@test "unattended heal without intent is E_INTENT_MISSING" {
+  UNLEASH_UNATTENDED=1
+  UNLEASH_RESUME=1
+  UNLEASH_INTENT_FLAG=0
+  SCRIPT_DIR="$TEST_DIR/no-usb"
+  mkdir -p "$SCRIPT_DIR"
+  rm -f "$TEST_DIR/Library/Unleash/state/intent"
+  run check_or_consume_intent "$TEST_DIR"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q E_INTENT_MISSING
+}
+
 @test "cmd_heal re-copies persist when binary missing" {
   if awk '/^pipeline_run_heal\(\)/,/^}/ { if ($0 ~ /UNLEASH_PERSIST=0/) found=1 } END { exit found ? 0 : 1 }' "$ROOT/lib/pipeline.sh"; then
     echo "pipeline_run_heal must not disable persist" >&2
