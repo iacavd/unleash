@@ -48,3 +48,13 @@ teardown() {
   run check_mdm_status "$TEST_DIR"
   [ "$status" -eq 0 ]
 }
+
+@test "check_mdm_status does not abort when RecordFound has no OrganizationName" {
+  set -eEuo pipefail
+  cat > "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict></dict></plist>
+EOF
+  check_mdm_status "$TEST_DIR"
+}

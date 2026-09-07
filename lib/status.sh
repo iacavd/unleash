@@ -45,7 +45,7 @@ check_mdm_status() {
 	step "Blocked domains in hosts"
 	if [ -f "$hosts" ]; then
 		local matches
-		matches=$(grep -iE 'iprofiles|enrollment|mdm|acmdm|albert|gdmf|configuration|xp\.apple|gs\.apple|tb\.apple' "$hosts" 2>/dev/null)
+		matches=$(grep -iE 'iprofiles|enrollment|mdm|acmdm|albert|gdmf|configuration|xp\.apple|gs\.apple|tb\.apple' "$hosts" 2>/dev/null || true)
 		if [ -n "$matches" ]; then
 			echo "$matches" | while IFS= read -r line; do
 				echo -e "  ${GRN}$line${NC}"
@@ -53,8 +53,10 @@ check_mdm_status() {
 		else
 			echo -e "  ${YEL}(none)${NC}"
 		fi
-		local count; count=$(echo "$matches" | grep -c . 2>/dev/null || echo 0)
-		echo -e "  ${CYAN}Total: $count of 13 expected domains blocked${NC}"
+		local count expected=14
+		count=$(printf '%s\n' "$matches" | grep -c . 2>/dev/null || true)
+		count="${count:-0}"
+		echo -e "  ${CYAN}Total: $count of $expected expected domains blocked${NC}"
 	else
 		echo -e "  ${YEL}(hosts not found)${NC}"
 	fi
@@ -86,10 +88,18 @@ check_mdm_status() {
 	echo ""
 
 	if [ -f "$cfg/.cloudConfigRecordFound" ]; then
-		local org
+		local org=""
 		org=$(plutil -convert xml1 -o - "$cfg/.cloudConfigRecordFound" 2>/dev/null \
-			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/')
-		[ -n "$org" ] && echo -e "${YEL}Active DEP record found — device assigned to: $org${NC}"
+			| grep -iA1 OrganizationName | tail -1 | sed -E 's/.*<string>(.*)<\/string>.*/\1/' || true)
+		if [ -n "$org" ]; then
+			echo -e "${YEL}On-disk DEP record present — assigned to: $org${NC}"
+		else
+			echo -e "${YEL}On-disk DEP record present (no organization name). Enrollment may be inactive, but a wipe can re-lock.${NC}"
+		fi
+		echo -e "${CYAN}Next: boot Recovery and run ./unleash apply --unattended${NC}"
+	elif [ ! -f "$cfg/.cloudConfigRecordNotFound" ]; then
+		echo -e "${YEL}DEP bypass sentinel .cloudConfigRecordNotFound is missing.${NC}"
+		echo -e "${CYAN}Next: boot Recovery and run ./unleash apply --unattended${NC}"
 	else
 		echo -e "${GRN}No active DEP record.${NC}"
 	fi
@@ -320,6 +330,8 @@ deep_status_json() {
 
 # Live and Recovery. Dirty probes → exit 3 (read-only; 4 is mutate+verify fail).
 run_status() {
+	# Status must not treat "never installed" persist/pf as apply-verify failure.
+	UNLEASH_PROBE_STATUS=1
 	if type run_probes >/dev/null 2>&1; then
 		run_probes
 	fi

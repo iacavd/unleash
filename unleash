@@ -341,8 +341,8 @@ cmd_harden() {
 }
 
 cmd_audit() {
-	# audit is status (never kill).
-	cmd_status
+	# audit is status (never kill). || so exit 3 is not an ERR trap.
+	cmd_status "$@" || exit $?
 }
 
 cmd_whitelist() {

@@ -494,7 +494,7 @@ probe_dep() {
 	local org=""
 
 	if [ ! -f "$notfound" ]; then
-		result_fail E_VERIFY_FAIL heal dep ".cloudConfigRecordNotFound missing at $cfg"
+		result_fail E_VERIFY_FAIL heal dep "DEP bypass sentinel missing at $cfg. Enrollment may be inactive, but a wipe can re-lock. Next: boot Recovery and run ./unleash apply --unattended"
 		return 0
 	fi
 	if [ ! -f "$found" ]; then
@@ -595,11 +595,20 @@ EOF
 }
 
 probe_persist() {
+	local bin plist
 	if persist_probe_ok; then
 		result_ok heal persist "binary and plist live-path"
 		return 0
 	fi
-	result_fail E_VERIFY_FAIL heal persist "persist binary missing or plist not live-path"
+	_persist_use_root
+	bin="$(unleash_root)/unleash"
+	plist="${DATA_ROOT}/Library/LaunchDaemons/${PERSIST_LABEL}.plist"
+	# Status/audit: not installed yet is skip, not a failed apply.
+	if [ "${UNLEASH_PROBE_STATUS:-0}" = 1 ] && [ ! -f "$bin" ] && [ ! -f "$plist" ]; then
+		result_skip S_NOT_INSTALLED heal persist "persist not installed. Next: sudo ./unleash persist"
+		return 0
+	fi
+	result_fail E_VERIFY_FAIL heal persist "persist binary missing or plist not live-path. Next: sudo ./unleash persist"
 	return 0
 }
 
@@ -613,7 +622,11 @@ probe_pf() {
 		return 0
 	fi
 	if [ ! -s "$anchor" ]; then
-		result_fail E_VERIFY_FAIL heal pf "pf anchor missing or empty: $anchor"
+		if [ "${UNLEASH_PROBE_STATUS:-0}" = 1 ]; then
+			result_skip S_NOT_INSTALLED heal pf "pf MDM anchor not installed. Next: sudo ./unleash firewall"
+			return 0
+		fi
+		result_fail E_VERIFY_FAIL heal pf "pf anchor missing or empty: $anchor. Next: sudo ./unleash firewall"
 		return 0
 	fi
 	if ! _probe_is_live_os; then

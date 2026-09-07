@@ -477,7 +477,7 @@ has_backup() {
 	local root latest legacy
 	root=$(_snapshot_root)
 	if [ -d "$root" ]; then
-		latest=$(ls -1d "$root"/????-??-??_??-??-?? 2>/dev/null | sort -r | head -1)
+		latest=$(ls -1d "$root"/????-??-??_??-??-?? 2>/dev/null | sort -r | head -1 || true)
 		[ -n "$latest" ] && [ -d "$latest" ] && return 0
 	fi
 	legacy=$(_legacy_backup_dir)

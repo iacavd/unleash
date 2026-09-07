@@ -175,6 +175,22 @@ teardown() {
   [ "$RESULT_REASON" = "S_NO_DSCACHEUTIL" ]
 }
 
+@test "probe_persist status mode is S_NOT_INSTALLED when files absent" {
+  DATA_ROOT="$TEST_DIR"
+  UNLEASH_PROBE_STATUS=1
+  probe_persist
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_NOT_INSTALLED" ]
+}
+
+@test "probe_pf status mode is S_NOT_INSTALLED when anchor absent" {
+  DATA_ROOT="$TEST_DIR"
+  UNLEASH_PROBE_STATUS=1
+  probe_pf
+  [ "$RESULT_STATUS" = "skip" ]
+  [ "$RESULT_REASON" = "S_NOT_INSTALLED" ]
+}
+
 @test "probe_pf Recovery/fixture is S_PF_RECOVERY when anchor exists" {
   DATA_ROOT="$TEST_DIR"
   probe_pf

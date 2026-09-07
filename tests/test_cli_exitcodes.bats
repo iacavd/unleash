@@ -213,6 +213,18 @@ assert obj["exit"] == 2
   ! echo "$output" | grep -q 'unhandled error'
 }
 
+@test "./unleash status with RecordFound and no org does not trap" {
+  mkdir -p "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings"
+  cat > "$TEST_DIR/private/var/db/ConfigurationProfiles/Settings/.cloudConfigRecordFound" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict></dict></plist>
+EOF
+  run "$UNLEASH" status --volume "$TEST_DIR"
+  ! echo "$output" | grep -q 'unhandled error'
+  [ "$status" -eq 3 ] || [ "$status" -eq 0 ]
+}
+
 @test "./unleash status --json planted fixture is exit 0" {
   load '../lib/suppress.sh'
   suppress_enrollment "$TEST_DIR"
